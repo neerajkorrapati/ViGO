@@ -2,59 +2,51 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 
 class PartyModel {
   final String id;
-  final String hostName;
-  final String phoneNumber;
+  final String hostId;
   final String pickup;
   final String destination;
   final String vehicleType;
   final int totalSeats;
-  final int filledSeats;
   final DateTime departureTime;
+  final List<Map<String, dynamic>> passengers; 
 
   PartyModel({
-    required this.id,
-    required this.hostName,
-    required this.phoneNumber,
-    required this.pickup,
-    required this.destination,
-    required this.vehicleType,
-    required this.totalSeats,
-    required this.filledSeats,
-    required this.departureTime,
+    required this.id, required this.hostId, required this.pickup,
+    required this.destination, required this.vehicleType,
+    required this.totalSeats, required this.departureTime,
+    required this.passengers,
   });
 
-  // Helper to calculate spots left for the UI
-  int get seatsLeft => totalSeats - filledSeats;
-
-  // Check if the ride is already full
-  bool get isFull => filledSeats >= totalSeats;
+  int get seatsLeft => totalSeats - passengers.length;
+  bool get isFull => passengers.length >= totalSeats;
 
   factory PartyModel.fromFirestore(DocumentSnapshot doc) {
-    final data = doc.data() as Map<String, dynamic>;
+    // Robust null checking for the entire document
+    Map<String, dynamic> data = doc.data() as Map<String, dynamic>? ?? {};
+    
     return PartyModel(
       id: doc.id,
-      hostName: data['hostName'] ?? 'VIT Student',
-      phoneNumber: data['phoneNumber'] ?? '',
-      pickup: data['pickup'] ?? 'Main Gate',
-      destination: data['destination'] ?? 'Katpadi Station',
+      hostId: data['hostId'] ?? '',
+      pickup: data['pickup'] ?? 'Unknown',
+      destination: data['destination'] ?? 'Unknown',
       vehicleType: data['vehicleType'] ?? 'auto',
       totalSeats: data['totalSeats'] ?? 3,
-      filledSeats: data['filledSeats'] ?? 1,
-      departureTime: (data['departureTime'] as Timestamp).toDate(),
+      // Handle potential null or missing timestamps
+      departureTime: data['departureTime'] != null 
+          ? (data['departureTime'] as Timestamp).toDate() 
+          : DateTime.now(),
+      passengers: List<Map<String, dynamic>>.from(data['passengers'] ?? []),
     );
   }
 
-  Map<String, dynamic> toJson() {
-    return {
-      'hostName': hostName,
-      'phoneNumber': phoneNumber,
-      'pickup': pickup,
-      'destination': destination,
-      'vehicleType': vehicleType,
-      'totalSeats': totalSeats,
-      'filledSeats': filledSeats,
-      'departureTime': Timestamp.fromDate(departureTime),
-      'createdAt': FieldValue.serverTimestamp(),
-    };
-  }
+  Map<String, dynamic> toJson() => {
+    'hostId': hostId, 
+    'pickup': pickup, 
+    'destination': destination,
+    'vehicleType': vehicleType, 
+    'totalSeats': totalSeats,
+    'departureTime': Timestamp.fromDate(departureTime),
+    'passengers': passengers,
+    'createdAt': FieldValue.serverTimestamp(),
+  };
 }

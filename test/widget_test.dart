@@ -4,7 +4,7 @@ import 'package:vigo/main.dart';
 void main() {
   testWidgets('Vi Go app loads', (WidgetTester tester) async {
 
-    await tester.pumpWidget(const ViGoApp());
+    await tester.pumpWidget(const VigoApp());
 
     expect(find.text('Firebase Connected 🚀'), findsOneWidget);
   });
