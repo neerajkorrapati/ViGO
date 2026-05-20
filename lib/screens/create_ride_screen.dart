@@ -73,7 +73,7 @@ class _CreateRideScreenState extends State<CreateRideScreen> {
     }
 
     if (_pickupPoint == _destination) {
-      _showWarningSnackBar("Your pickup point and destination point cannot match.");
+      _showWarningSnackBar("Your pickup point and destination point cannot match.(Why would u wanna go to the same place from the same place xD!");
       return;
     }
 
