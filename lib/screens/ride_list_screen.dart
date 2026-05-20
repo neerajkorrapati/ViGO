@@ -48,7 +48,6 @@ class _RideListScreenState extends State<RideListScreen> {
     }
   }
 
-  // --- ACTIONS INTERCEPTION ROUTER ---
   void _handleAction(VoidCallback onAuthSuccess) async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) {
@@ -73,25 +72,15 @@ class _RideListScreenState extends State<RideListScreen> {
     }
   }
 
-  // --- HELPER: COUNTDOWN CALCULATOR ---
   String _formatDepartureCountdown(DateTime departureTime) {
     final now = DateTime.now();
     final difference = departureTime.difference(now);
-
-    if (difference.isNegative) {
-      return "Departed";
-    }
-
-    if (difference.inDays >= 1) {
-      return "${difference.inDays}d ${difference.inHours % 24}hrs left";
-    } else if (difference.inHours >= 1) {
-      return "${difference.inHours}hrs left";
-    } else {
-      return "${difference.inMinutes}mins left";
-    }
+    if (difference.isNegative) return "Departed";
+    if (difference.inDays >= 1) return "${difference.inDays}d ${difference.inHours % 24}hrs left";
+    if (difference.inHours >= 1) return "${difference.inHours}hrs left";
+    return "${difference.inMinutes}mins left";
   }
 
-  // --- HELPERS: DATE TIME FORMATTERS ---
   String _formatDate(DateTime dt) {
     const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
     return "${dt.day} ${months[dt.month - 1]}";
@@ -101,116 +90,88 @@ class _RideListScreenState extends State<RideListScreen> {
     return "${dt.hour}:${dt.minute.toString().padLeft(2, '0')}";
   }
 
-  // --- CROSS-PLATFORM MOBILE AND DESKTOP LINK HANDLING ---
-  Future<void> _launchWhatsApp(String phone, String driverName, String pickup, String dest) async {
+  Future<void> _launchWhatsApp(String phone, String hostName, String pickup, String dest) async {
     if (phone.isEmpty) {
       _showSnackBar("Student has not listed a valid phone number link.");
       return;
     }
-    
     final cleanPhone = phone.replaceAll(RegExp(r'[^\d+]'), '');
     String formattedPhone = cleanPhone;
     if (!formattedPhone.startsWith('+')) {
-      if (formattedPhone.length == 10) {
-        formattedPhone = "91$formattedPhone";
-      }
+      formattedPhone = formattedPhone.length == 10 ? "91$formattedPhone" : formattedPhone;
     } else {
       formattedPhone = formattedPhone.replaceAll('?', '');
     }
-
-    final templateMessage = Uri.encodeComponent(
-      "Hello $driverName, I saw your ViGo Carpool offer from $pickup heading towards $dest. Is there a slot open to split the booking?"
-    );
-    
+    final templateMessage = Uri.encodeComponent("Hello $hostName, I saw your ViGo Carpool offer from $pickup heading towards $dest. Is there a slot open to split the booking?");
     final url = "https://api.whatsapp.com/send?phone=$formattedPhone&text=$templateMessage";
-    final uri = Uri.parse(url);
-
     try {
-      await launchUrl(uri, mode: LaunchMode.platformDefault);
+      await launchUrl(Uri.parse(url), mode: LaunchMode.platformDefault);
     } catch (e) {
       _showSnackBar("Could not open WhatsApp link automatically.");
     }
   }
 
-  // --- JOIN REQUEST DATA PAYLOAD ---
   Future<void> _sendJoinRequest(String rideId, Ride ride) async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return;
-
     if (user.uid == ride.driverId) {
       _showSnackBar("You cannot submit entry requests to join your own ride offer.");
       return;
     }
-
     try {
-      final check = await FirebaseFirestore.instance
-          .collection('requests')
-          .where('rideId', isEqualTo: rideId)
-          .where('passengerId', isEqualTo: user.uid)
-          .get();
-
-      bool hasActiveRequest = check.docs.any((doc) {
-        final String status = doc.data()['status'] ?? 'pending';
-        return status == 'pending' || status == 'accepted';
-      });
-
+      final check = await FirebaseFirestore.instance.collection('requests').where('rideId', isEqualTo: rideId).where('passengerId', isEqualTo: user.uid).get();
+      bool hasActiveRequest = check.docs.any((doc) => doc.data()['status'] == 'pending' || doc.data()['status'] == 'accepted');
       if (hasActiveRequest) {
         _showSnackBar("You already have a pending or approved request for this journey.");
         return;
       }
+      
+      String passengerGender = 'Male'; 
+      try {
+         final userDoc = await FirebaseFirestore.instance.collection('users').doc(user.uid).get();
+         if (userDoc.exists) {
+           passengerGender = userDoc.data()?['gender'] ?? 'Male';
+         }
+      } catch(e){
+         debugPrint("Could not fetch user gender.");
+      }
 
       await FirebaseFirestore.instance.collection('requests').add({
         'rideId': rideId,
-        'driverId': ride.driverId,
-        'driverName': ride.driverName,
+        'driverId': ride.driverId, // DB Field stays safe
+        'driverName': ride.driverName, // DB Field stays safe
         'passengerId': user.uid,
         'passengerName': user.displayName ?? 'VIT Student',
         'passengerEmail': user.email ?? '',
+        'passengerGender': passengerGender, 
         'pickupPoint': ride.pickupPoint,
         'destination': ride.destination,
         'departureTime': Timestamp.fromDate(ride.departureTime),
         'status': 'pending', 
         'timestamp': FieldValue.serverTimestamp(),
       });
-
-      _showSnackBar("Join request sent! The driver will review your application inside their account.");
+      _showSnackBar("Join request sent! The host will review your application.");
     } catch (e) {
       _showSnackBar("Transaction error: ${e.toString()}");
     }
   }
 
-  // --- FULLY FIXED APPROVAL LOGIC ---
   Future<void> _processRequestDecision(String requestId, String rideId, String decisionStatus) async {
     try {
       final requestRef = FirebaseFirestore.instance.collection('requests').doc(requestId);
       final rideRef = FirebaseFirestore.instance.collection('rides').doc(rideId);
-
       if (decisionStatus == 'accepted') {
         final rideSnap = await rideRef.get();
-
-        if (!rideSnap.exists) {
-          _showSnackBar("Error: Ride not found.");
-          return;
-        }
-
+        if (!rideSnap.exists) { _showSnackBar("Error: Ride not found."); return; }
         final data = rideSnap.data() as Map<String, dynamic>? ?? {};
         var rawSeats = data['availableSeats'] ?? data['totalSeats'] ?? data['seats'];
-
         int seatsLeft = 0;
-        if (rawSeats is num) {
-          seatsLeft = rawSeats.toInt();
-        } else if (rawSeats is String) {
-          seatsLeft = int.tryParse(rawSeats) ?? 0;
-        }
+        if (rawSeats is num) seatsLeft = rawSeats.toInt();
+        else if (rawSeats is String) seatsLeft = int.tryParse(rawSeats) ?? 0;
 
-        if (seatsLeft <= 0) {
-          _showSnackBar("Cannot accept. Vehicle capacity is entirely full.");
-          return;
-        }
-
+        if (seatsLeft <= 0) { _showSnackBar("Cannot accept. Vehicle capacity is entirely full."); return; }
         await requestRef.update({'status': 'accepted'});
         await rideRef.update({'availableSeats': seatsLeft - 1});
-
         _showSnackBar("Student invite accepted. Seats updated.");
       } else {
         await requestRef.update({'status': 'declined'});
@@ -218,11 +179,9 @@ class _RideListScreenState extends State<RideListScreen> {
       }
     } catch (e) {
       _showSnackBar("Network Error: Could not process request.");
-      debugPrint("🚨 Error: $e");
     }
   }
 
-  // --- NEW: CLEAR REQUEST HISTORY FROM HUB ---
   Future<void> _confirmClearRequest(String requestId) async {
     showDialog(
       context: context,
@@ -249,7 +208,6 @@ class _RideListScreenState extends State<RideListScreen> {
     );
   }
 
-  // --- ACTIONS: CONFIRM EXPLICIT DELETIONS ---
   Future<void> _confirmDeleteRide(String rideId) async {
     showDialog(
       context: context,
@@ -305,21 +263,139 @@ class _RideListScreenState extends State<RideListScreen> {
                       if (!ctx.mounted) return;
                       Navigator.pop(ctx); 
                       if (!mounted) return;
-                      if (isDone) {
-                        onAuthSuccess(); 
-                      } else {
-                        Navigator.push(context, MaterialPageRoute(builder: (_) => const OnboardingScreen()));
-                      }
+                      if (isDone) onAuthSuccess(); 
+                      else Navigator.push(context, MaterialPageRoute(builder: (_) => const OnboardingScreen()));
                     }
                   } catch (e) {
                     if (!mounted) return;
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text("Authentication Failed: $e"), backgroundColor: Colors.redAccent),
-                    );
+                    _showSnackBar("Authentication Failed: $e");
                   }
                 },
               ),
             )
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _handleRideTap(String rideId, Map<String, dynamic> rideData, bool isMyOwnRide, int totalCapacity, int emptySeats) async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      _showLogin(() {});
+      return;
+    }
+
+    if (!isMyOwnRide) {
+      final checkSnap = await FirebaseFirestore.instance.collection('requests')
+          .where('rideId', isEqualTo: rideId)
+          .where('passengerId', isEqualTo: user.uid)
+          .where('status', isEqualTo: 'accepted')
+          .get();
+      
+      if (checkSnap.docs.isEmpty) {
+        _showSnackBar("🔒 You must be accepted into this ride to view the passenger manifest.");
+        return;
+      }
+    }
+
+    if (!mounted) return;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Container(
+        padding: const EdgeInsets.all(24),
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.only(topLeft: Radius.circular(30), topRight: Radius.circular(30))
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Container(width: 40, height: 5, decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(10))),
+            const SizedBox(height: 20),
+            const Text("Ride Manifest", style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.indigo)),
+            const SizedBox(height: 8),
+            Text("${rideData['pickupPoint']} ➔ ${rideData['destination']}", style: const TextStyle(color: Colors.grey, fontSize: 13)),
+            const SizedBox(height: 24),
+
+            FutureBuilder<QuerySnapshot>(
+              future: FirebaseFirestore.instance.collection('requests').where('rideId', isEqualTo: rideId).where('status', isEqualTo: 'accepted').get(),
+              builder: (ctx, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const Padding(padding: EdgeInsets.all(32), child: CircularProgressIndicator());
+                }
+
+                List<Map<String, dynamic>> occupants = [];
+                
+                // --- HOST IS ADDED FIRST ---
+                String hostGender = rideData['driverGender'] ?? 'Male'; 
+                occupants.add({
+                  'name': rideData['driverName'] ?? 'Host',
+                  'role': 'Host', // Explicitly labeled as Host
+                  'gender': hostGender,
+                  'color': hostGender.toString().toLowerCase() == 'female' ? Colors.pink[400] : Colors.blue[400],
+                });
+
+                if (snapshot.hasData) {
+                  for (var doc in snapshot.data!.docs) {
+                    final pData = doc.data() as Map<String, dynamic>;
+                    String pGender = pData['passengerGender'] ?? 'Male'; 
+                    occupants.add({
+                      'name': pData['passengerName'] ?? 'Passenger',
+                      'role': 'Passenger',
+                      'gender': pGender,
+                      'color': pGender.toString().toLowerCase() == 'female' ? Colors.pink[400] : Colors.blue[400],
+                    });
+                  }
+                }
+
+                return Column(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 20),
+                      decoration: BoxDecoration(color: Colors.grey[50], borderRadius: BorderRadius.circular(20), border: Border.all(color: Colors.grey[200]!)),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          ...occupants.map((occ) => Padding(
+                                padding: const EdgeInsets.symmetric(horizontal: 4),
+                                child: Icon(Icons.person, size: 32, color: occ['color']),
+                              )),
+                          ...List.generate(emptySeats, (index) => const Padding(
+                                padding: EdgeInsets.symmetric(horizontal: 4),
+                                child: Icon(Icons.person_outline, size: 32, color: Colors.black26),
+                              )),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+                    
+                    ListView.builder(
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      itemCount: occupants.length,
+                      itemBuilder: (context, index) {
+                        final occ = occupants[index];
+                        return ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          leading: CircleAvatar(
+                            backgroundColor: (occ['color'] as Color).withOpacity(0.1),
+                            child: Icon(occ['role'] == 'Host' ? Icons.star : Icons.person, color: occ['color'], size: 18),
+                          ),
+                          title: Text(occ['name'], style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                          subtitle: Text(occ['role'], style: TextStyle(color: occ['role'] == 'Host' ? Colors.indigo : Colors.grey, fontSize: 12)),
+                        );
+                      },
+                    ),
+                    const SizedBox(height: 16),
+                  ],
+                );
+              },
+            ),
           ],
         ),
       ),
@@ -336,20 +412,9 @@ class _RideListScreenState extends State<RideListScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             const SizedBox(height: 4),
-            Image.network(
-              "/vigo_full_logo.jpeg", 
-              height: 28, 
-              fit: BoxFit.contain,
-              errorBuilder: (context, error, stackTrace) => const Text(
-                "ViGo", 
-                style: TextStyle(fontWeight: FontWeight.w900, fontSize: 24, color: Colors.indigo)
-              ),
-            ),
+            Image.network("/vigo_full_logo.jpeg", height: 28, fit: BoxFit.contain, errorBuilder: (context, error, stackTrace) => const Text("ViGo", style: TextStyle(fontWeight: FontWeight.w900, fontSize: 24, color: Colors.indigo))),
             const SizedBox(height: 2),
-            const Text(
-              "VIT Vellore Campus Transit Network", 
-              style: TextStyle(fontSize: 11, color: Colors.grey, fontWeight: FontWeight.w500)
-            ),
+            const Text("VIT Vellore Campus Transit Network", style: TextStyle(fontSize: 11, color: Colors.grey, fontWeight: FontWeight.w500)),
           ],
         ),
         backgroundColor: Colors.white,
@@ -359,12 +424,7 @@ class _RideListScreenState extends State<RideListScreen> {
           StreamBuilder<User?>(
             stream: _authService.user,
             builder: (context, snapshot) {
-              if (snapshot.hasData) {
-                return IconButton(
-                  icon: const Icon(Icons.logout, color: Colors.redAccent), 
-                  onPressed: () => _authService.signOut()
-                );
-              }
+              if (snapshot.hasData) return IconButton(icon: const Icon(Icons.logout, color: Colors.redAccent), onPressed: () => _authService.signOut());
               return const SizedBox.shrink();
             },
           )
@@ -373,9 +433,7 @@ class _RideListScreenState extends State<RideListScreen> {
       body: _currentTabNavigationIndex == 0 ? _buildExplorePoolsFeed() : _buildDashboardHub(),
       floatingActionButton: _currentTabNavigationIndex == 0
           ? FloatingActionButton.extended(
-              onPressed: () => _handleAction(() {
-                Navigator.push(context, MaterialPageRoute(builder: (_) => const CreateRideScreen()));
-              }),
+              onPressed: () => _handleAction(() { Navigator.push(context, MaterialPageRoute(builder: (_) => const CreateRideScreen())); }),
               backgroundColor: Colors.indigo,
               label: const Text("Offer a Ride", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
               icon: const Icon(Icons.add, color: Colors.white),
@@ -405,26 +463,20 @@ class _RideListScreenState extends State<RideListScreen> {
             builder: (context, snapshot) {
               if (snapshot.hasError) return Center(child: Text("Database Connection Issue: ${snapshot.error}"));
               if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
-
               final rawRides = snapshot.data?.docs ?? [];
               final rides = rawRides.where((doc) {
                 final data = doc.data() as Map<String, dynamic>;
                 final vType = data['vehicleType'] ?? 'Auto'; 
                 bool matchesVehicle = _selectedVehicleFilter == 'All' || vType.toLowerCase() == _selectedVehicleFilter.toLowerCase();
-                
                 bool matchesDate = true;
                 if (_selectedDateFilter != null && data['departureTime'] != null) {
                   final depDate = (data['departureTime'] as Timestamp).toDate();
-                  matchesDate = depDate.year == _selectedDateFilter!.year &&
-                                depDate.month == _selectedDateFilter!.month &&
-                                depDate.day == _selectedDateFilter!.day;
+                  matchesDate = depDate.year == _selectedDateFilter!.year && depDate.month == _selectedDateFilter!.month && depDate.day == _selectedDateFilter!.day;
                 }
                 return matchesVehicle && matchesDate;
               }).toList();
 
-              if (rides.isEmpty) {
-                return _buildEmptyState();
-              }
+              if (rides.isEmpty) return _buildEmptyState();
 
               return ListView.builder(
                 padding: const EdgeInsets.all(16),
@@ -435,8 +487,6 @@ class _RideListScreenState extends State<RideListScreen> {
                   final data = doc.data() as Map<String, dynamic>;
                   final String vehicle = data['vehicleType'] ?? 'Auto';
                   final String phone = data['driverPhone'] ?? '';
-
-                  // PASSED RAW DATA to calculate the joined count accurately
                   return _buildPremiumRideCard(ride, vehicle, phone, doc.id, data);
                 },
               );
@@ -508,10 +558,7 @@ class _RideListScreenState extends State<RideListScreen> {
       builder: (context, snapshot) {
         if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
         final reqDocs = snapshot.data!.docs;
-
-        if (reqDocs.isEmpty) {
-          return _buildMiniEmptyState(Icons.mail_outline, "No incoming invites", "When other students ask to join your carpool paths, they will emerge here.");
-        }
+        if (reqDocs.isEmpty) return _buildMiniEmptyState(Icons.mail_outline, "No incoming invites", "When other students ask to join your carpool paths, they will emerge here.");
 
         return ListView.builder(
           padding: const EdgeInsets.all(16),
@@ -536,20 +583,9 @@ class _RideListScreenState extends State<RideListScreen> {
                       title: Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          Expanded(
-                            child: Text(
-                              data['passengerName'] ?? 'VIT Student', 
-                              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.black87),
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
+                          Expanded(child: Text(data['passengerName'] ?? 'VIT Student', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.black87), overflow: TextOverflow.ellipsis)),
                           _buildStatusChip(status),
-                          // NEW: History cleanup button
-                          IconButton(
-                            icon: const Icon(Icons.delete_outline, size: 20, color: Colors.grey),
-                            onPressed: () => _confirmClearRequest(doc.id),
-                            tooltip: "Clear from history",
-                          )
+                          IconButton(icon: const Icon(Icons.delete_outline, size: 20, color: Colors.grey), onPressed: () => _confirmClearRequest(doc.id), tooltip: "Clear from history")
                         ],
                       ),
                       subtitle: Padding(
@@ -561,21 +597,9 @@ class _RideListScreenState extends State<RideListScreen> {
                           const SizedBox(height: 14),
                           Row(
                             children: [
-                              Expanded(
-                                child: OutlinedButton(
-                                  style: OutlinedButton.styleFrom(foregroundColor: Colors.redAccent, side: const BorderSide(color: Colors.redAccent)),
-                                  onPressed: () => _processRequestDecision(doc.id, rideId, 'declined'),
-                                  child: const Text("Decline"),
-                                ),
-                              ),
+                              Expanded(child: OutlinedButton(style: OutlinedButton.styleFrom(foregroundColor: Colors.redAccent, side: const BorderSide(color: Colors.redAccent)), onPressed: () => _processRequestDecision(doc.id, rideId, 'declined'), child: const Text("Decline"))),
                               const SizedBox(width: 12),
-                              Expanded(
-                                child: ElevatedButton(
-                                  style: ElevatedButton.styleFrom(backgroundColor: Colors.indigo, foregroundColor: Colors.white),
-                                  onPressed: () => _processRequestDecision(doc.id, rideId, 'accepted'),
-                                  child: const Text("Accept Request"),
-                                ),
-                              ),
+                              Expanded(child: ElevatedButton(style: ElevatedButton.styleFrom(backgroundColor: Colors.indigo, foregroundColor: Colors.white), onPressed: () => _processRequestDecision(doc.id, rideId, 'accepted'), child: const Text("Accept Request"))),
                             ],
                           )
                         ]
@@ -597,10 +621,7 @@ class _RideListScreenState extends State<RideListScreen> {
       builder: (context, snapshot) {
         if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
         final reqDocs = snapshot.data!.docs;
-
-        if (reqDocs.isEmpty) {
-          return _buildMiniEmptyState(Icons.near_me_outlined, "No requests sent yet", "Tap 'Join Ride' on an active pool offer card to register an application route link.");
-        }
+        if (reqDocs.isEmpty) return _buildMiniEmptyState(Icons.near_me_outlined, "No requests sent yet", "Tap 'Join Ride' on an active pool offer card to register an application route link.");
 
         return ListView.builder(
           padding: const EdgeInsets.all(16),
@@ -620,16 +641,10 @@ class _RideListScreenState extends State<RideListScreen> {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Expanded(
-                        child: Text("Pool with ${data['driverName'] ?? 'Host'}", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15), overflow: TextOverflow.ellipsis,),
-                      ),
+                      // --- UI STRING CHANGED TO "Host" HERE ---
+                      Expanded(child: Text("Pool with ${data['driverName'] ?? 'Host'}", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15), overflow: TextOverflow.ellipsis)),
                       _buildStatusChip(status),
-                      // NEW: History cleanup button
-                      IconButton(
-                        icon: const Icon(Icons.delete_outline, size: 20, color: Colors.grey),
-                        onPressed: () => _confirmClearRequest(doc.id),
-                        tooltip: "Cancel or clear request",
-                      )
+                      IconButton(icon: const Icon(Icons.delete_outline, size: 20, color: Colors.grey), onPressed: () => _confirmClearRequest(doc.id), tooltip: "Cancel or clear request")
                     ],
                   ),
                   const SizedBox(height: 8),
@@ -646,13 +661,8 @@ class _RideListScreenState extends State<RideListScreen> {
   Widget _buildStatusChip(String status) {
     Color bg = Colors.amber[50]!;
     Color fg = Colors.amber[800]!;
-    if (status == 'accepted') {
-      bg = Colors.green[50]!;
-      fg = Colors.green[800]!;
-    } else if (status == 'declined') {
-      bg = Colors.grey[100]!;
-      fg = Colors.grey[600]!;
-    }
+    if (status == 'accepted') { bg = Colors.green[50]!; fg = Colors.green[800]!; } 
+    else if (status == 'declined') { bg = Colors.grey[100]!; fg = Colors.grey[600]!; }
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(12)),
@@ -679,16 +689,9 @@ class _RideListScreenState extends State<RideListScreen> {
   }
 
   Widget _buildFilterDock() {
-    final filterOptions = [
-      {'label': 'All Pools', 'icon': Icons.all_inclusive},
-      {'label': 'Auto', 'icon': Icons.electric_rickshaw},
-      {'label': 'Cab', 'icon': Icons.local_taxi},
-    ];
-
+    final filterOptions = [{'label': 'All Pools', 'icon': Icons.all_inclusive}, {'label': 'Auto', 'icon': Icons.electric_rickshaw}, {'label': 'Cab', 'icon': Icons.local_taxi}];
     return Container(
-      width: double.infinity, 
-      color: Colors.white,
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+      width: double.infinity, color: Colors.white, padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
       child: SingleChildScrollView(
         scrollDirection: Axis.horizontal,
         child: Row(
@@ -703,44 +706,28 @@ class _RideListScreenState extends State<RideListScreen> {
                   label: Text(opt['label'] as String),
                   selected: isSelected,
                   selectedColor: Colors.indigo,
-                  labelStyle: TextStyle(
-                    color: isSelected ? Colors.white : Colors.black87,
-                    fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-                  ),
+                  labelStyle: TextStyle(color: isSelected ? Colors.white : Colors.black87, fontWeight: isSelected ? FontWeight.bold : FontWeight.normal),
                   backgroundColor: Colors.grey[100],
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20), side: BorderSide.none),
                   onSelected: (_) => setState(() => _selectedVehicleFilter = opt['label']!.toString().split(' ')[0]),
                 ),
               );
             }),
-
             Container(width: 1, height: 24, margin: const EdgeInsets.symmetric(horizontal: 4), color: Colors.grey[300]),
             const SizedBox(width: 8),
-
             if (_selectedDateFilter != null)
               InputChip(
-                label: Text(_formatDate(_selectedDateFilter!)),
-                selected: true,
-                selectedColor: Colors.teal,
+                label: Text(_formatDate(_selectedDateFilter!)), selected: true, selectedColor: Colors.teal,
                 labelStyle: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
                 onDeleted: () => setState(() => _selectedDateFilter = null),
-                deleteIconColor: Colors.white,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20), side: BorderSide.none),
+                deleteIconColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20), side: BorderSide.none),
               )
             else
               IconButton(
-                icon: const Icon(Icons.calendar_month, color: Colors.indigo),
-                tooltip: "Select departure date filter",
+                icon: const Icon(Icons.calendar_month, color: Colors.indigo), tooltip: "Select departure date filter",
                 onPressed: () async {
-                  final picked = await showDatePicker(
-                    context: context,
-                    initialDate: DateTime.now(),
-                    firstDate: DateTime.now().subtract(const Duration(days: 1)),
-                    lastDate: DateTime.now().add(const Duration(days: 60)),
-                  );
-                  if (picked != null) {
-                    setState(() => _selectedDateFilter = picked);
-                  }
+                  final picked = await showDatePicker(context: context, initialDate: DateTime.now(), firstDate: DateTime.now().subtract(const Duration(days: 1)), lastDate: DateTime.now().add(const Duration(days: 60)));
+                  if (picked != null) setState(() => _selectedDateFilter = picked);
                 },
               ),
           ],
@@ -752,206 +739,173 @@ class _RideListScreenState extends State<RideListScreen> {
   Widget _buildPremiumRideCard(Ride ride, String vehicle, String phone, String docId, Map<String, dynamic> rawData) {
     final currentUser = FirebaseAuth.instance.currentUser;
     final bool isMyOwnRide = currentUser != null && ride.driverId == currentUser.uid;
+    
+    // Safety swap for UI display only (does not break database ID logic)
+    String hostName = ride.driverName; 
 
-    // --- NEW: Calculate Total Joined vs Available ---
     final rawTotal = rawData['totalSeats'] ?? rawData['seats'] ?? ride.availableSeats;
     int totalCapacity = rawTotal is num ? rawTotal.toInt() : (int.tryParse(rawTotal.toString()) ?? 4);
-    
     final rawAvailable = rawData['availableSeats'] ?? rawData['availableseats'] ?? totalCapacity;
     int currentAvailable = rawAvailable is num ? rawAvailable.toInt() : (int.tryParse(rawAvailable.toString()) ?? totalCapacity);
     
-    int joinedCount = totalCapacity - currentAvailable;
-    if (joinedCount < 0) joinedCount = 0; // Fallback safety measure
+    // --- EXPLICIT MATH FOR THE +1 HOST COUNT ---
+    int acceptedPassengers = totalCapacity - currentAvailable;
+    if (acceptedPassengers < 0) acceptedPassengers = 0;
+    
+    // The total people joined is the Host (+1) plus any accepted passengers
+    int joinedCount = acceptedPassengers + 1; 
+    
+    int emptySeats = currentAvailable < 0 ? 0 : currentAvailable;
 
-    return Container(
-      margin: const EdgeInsets.only(bottom: 16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: [BoxShadow(color: Colors.black.withAlpha(10), blurRadius: 12, offset: const Offset(0, 4))],
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                CircleAvatar(
-                  backgroundColor: Colors.indigo[50],
-                  child: Text(ride.driverName.substring(0, 1).toUpperCase(), style: const TextStyle(color: Colors.indigo, fontWeight: FontWeight.bold)),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(ride.driverName, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
-                      const Text("Verified VIT Student", style: TextStyle(color: Colors.green, fontSize: 11, fontWeight: FontWeight.w500)),
-                    ],
+    return InkWell(
+      onTap: () => _handleRideTap(docId, rawData, isMyOwnRide, totalCapacity, emptySeats),
+      borderRadius: BorderRadius.circular(20),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 16),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(20),
+          boxShadow: [BoxShadow(color: Colors.black.withAlpha(10), blurRadius: 12, offset: const Offset(0, 4))],
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  CircleAvatar(
+                    backgroundColor: Colors.indigo[50],
+                    child: Text(hostName.substring(0, 1).toUpperCase(), style: const TextStyle(color: Colors.indigo, fontWeight: FontWeight.bold)),
                   ),
-                ),
-                Container(
-                  padding: const EdgeInsets.fromLTRB(10, 6, 10, 6),
-                  decoration: BoxDecoration(color: Colors.amber[50], borderRadius: BorderRadius.circular(12)),
-                  child: Row(
-                    children: [
-                      Icon(vehicle.toLowerCase() == 'cab' ? Icons.local_taxi : Icons.electric_rickshaw, size: 14, color: Colors.amber[800]),
-                      const SizedBox(width: 4),
-                      Text(vehicle, style: TextStyle(color: Colors.amber[800], fontSize: 12, fontWeight: FontWeight.bold)),
-                    ],
-                  ),
-                ),
-                if (isMyOwnRide) ...[
-                  const SizedBox(width: 8),
-                  IconButton(
-                    icon: const Icon(Icons.delete_outline, color: Colors.redAccent, size: 22),
-                    tooltip: "Cancel this offer",
-                    onPressed: () => _confirmDeleteRide(docId),
-                  )
-                ]
-              ],
-            ),
-            const Padding(padding: EdgeInsets.symmetric(vertical: 12), child: Divider(height: 1, color: Color(0xFFF1F3F5))),
-            
-            Row(
-              children: [
-                Column(
-                  children: [
-                    const Icon(Icons.radio_button_checked, size: 18, color: Colors.indigo),
-                    Container(width: 2, height: 24, color: Colors.grey[200]),
-                    const Icon(Icons.location_on, size: 18, color: Colors.redAccent),
-                  ],
-                ),
-                const SizedBox(width: 14),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(ride.pickupPoint, style: const TextStyle(fontSize: 14, color: Colors.black54)),
-                      const SizedBox(height: 18),
-                      Text(ride.destination, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Colors.black87)),
-                    ],
-                  ),
-                ),
-                
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    // --- NEW: Rich Text Occupancy UI ---
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Icon(Icons.group, size: 14, color: Colors.indigo),
-                        const SizedBox(width: 4),
-                        Text("$joinedCount joined", style: const TextStyle(color: Colors.indigo, fontSize: 12, fontWeight: FontWeight.w600)),
+                        Text(hostName, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                        const Text("Verified VIT Student", style: TextStyle(color: Colors.green, fontSize: 11, fontWeight: FontWeight.w500)),
                       ],
                     ),
-                    const SizedBox(height: 4),
-                    Text("$currentAvailable spots left", style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.green, fontSize: 13)),
-                    const SizedBox(height: 6),
-                    Text(
-                      _formatDepartureCountdown(ride.departureTime),
-                      style: const TextStyle(color: Colors.orangeAccent, fontWeight: FontWeight.bold, fontSize: 12),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      "${_formatDate(ride.departureTime)}, ${_formatTimeOfDeparture(ride.departureTime)}",
-                      style: const TextStyle(color: Colors.grey, fontSize: 10),
-                    ),
-                  ],
-                )
-              ],
-            ),
-            const SizedBox(height: 20),
-            
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: () {
-                      if (currentUser == null) {
-                        _showLogin(() {
-                          _launchWhatsApp(phone, ride.driverName, ride.pickupPoint, ride.destination);
-                        });
-                      } else {
-                        _launchWhatsApp(phone, ride.driverName, ride.pickupPoint, ride.destination);
-                      }
-                    },
-                    icon: const Icon(Icons.chat_bubble_outline, size: 18),
-                    label: const Text("Chat"),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: Colors.indigo, 
-                      side: BorderSide(color: Colors.indigo[100]!),
-                      padding: const EdgeInsets.all(12),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.fromLTRB(10, 6, 10, 6),
+                    decoration: BoxDecoration(color: Colors.amber[50], borderRadius: BorderRadius.circular(12)),
+                    child: Row(
+                      children: [
+                        Icon(vehicle.toLowerCase() == 'cab' ? Icons.local_taxi : Icons.electric_rickshaw, size: 14, color: Colors.amber[800]),
+                        const SizedBox(width: 4),
+                        Text(vehicle, style: TextStyle(color: Colors.amber[800], fontSize: 12, fontWeight: FontWeight.bold)),
+                      ],
                     ),
                   ),
-                ),
-                const SizedBox(width: 12),
-                
-                // --- NEW: Dynamic Join Button Stream ---
-                Expanded(
-                  child: currentUser == null 
-                  ? ElevatedButton(
-                      onPressed: () => _showLogin(() => _sendJoinRequest(docId, ride)),
-                      style: ElevatedButton.styleFrom(backgroundColor: Colors.indigo, foregroundColor: Colors.white, elevation: 0, padding: const EdgeInsets.all(12), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
-                      child: const Text("Join Ride", style: TextStyle(fontWeight: FontWeight.bold)),
-                    )
-                  : isMyOwnRide 
-                    ? ElevatedButton(
-                        onPressed: null, // Disabled for the host
-                        style: ElevatedButton.styleFrom(backgroundColor: Colors.grey[200], foregroundColor: Colors.grey[600], elevation: 0, padding: const EdgeInsets.all(12), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
-                        child: const Text("Your Ride", style: TextStyle(fontWeight: FontWeight.bold)),
-                      )
-                    : StreamBuilder<QuerySnapshot>(
-                        stream: FirebaseFirestore.instance.collection('requests').where('rideId', isEqualTo: docId).where('passengerId', isEqualTo: currentUser.uid).snapshots(),
-                        builder: (ctx, snap) {
-                          String btnText = "Join Ride";
-                          Color btnColor = Colors.indigo;
-                          bool isClickable = true;
-
-                          if (snap.hasData && snap.data!.docs.isNotEmpty) {
-                            final reqData = snap.data!.docs.first.data() as Map<String, dynamic>;
-                            final status = reqData['status'] ?? 'pending';
-                            
-                            if (status == 'accepted') {
-                              btnText = "Ride Joined ✓";
-                              btnColor = Colors.green;
-                              isClickable = false; 
-                            } else if (status == 'pending') {
-                              btnText = "Requested...";
-                              btnColor = Colors.orange;
-                              isClickable = false;
-                            }
-                          }
-
-                          // If the ride is full and they haven't joined yet, block the button.
-                          if (currentAvailable <= 0 && isClickable) {
-                             btnText = "Pool Full";
-                             btnColor = Colors.redAccent;
-                             isClickable = false;
-                          }
-
-                          return ElevatedButton(
-                            onPressed: isClickable ? () => _sendJoinRequest(docId, ride) : null,
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: btnColor, 
-                              disabledBackgroundColor: btnColor.withOpacity(0.8), // Keeps the color visible even when disabled
-                              disabledForegroundColor: Colors.white,
-                              foregroundColor: Colors.white, 
-                              elevation: 0,
-                              padding: const EdgeInsets.all(12),
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                            ),
-                            child: Text(btnText, style: const TextStyle(fontWeight: FontWeight.bold)),
-                          );
-                        },
+                  if (isMyOwnRide) ...[
+                    const SizedBox(width: 8),
+                    IconButton(icon: const Icon(Icons.delete_outline, color: Colors.redAccent, size: 22), tooltip: "Cancel this offer", onPressed: () => _confirmDeleteRide(docId))
+                  ]
+                ],
+              ),
+              const Padding(padding: EdgeInsets.symmetric(vertical: 12), child: Divider(height: 1, color: Color(0xFFF1F3F5))),
+              
+              Row(
+                children: [
+                  Column(
+                    children: [
+                      const Icon(Icons.radio_button_checked, size: 18, color: Colors.indigo),
+                      Container(width: 2, height: 24, color: Colors.grey[200]),
+                      const Icon(Icons.location_on, size: 18, color: Colors.redAccent),
+                    ],
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(ride.pickupPoint, style: const TextStyle(fontSize: 14, color: Colors.black54)),
+                        const SizedBox(height: 18),
+                        Text(ride.destination, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Colors.black87)),
+                      ],
                     ),
-                ),
-              ],
-            )
-          ],
+                  ),
+                  
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.group, size: 14, color: Colors.indigo),
+                          const SizedBox(width: 4),
+                          Text("$joinedCount joined", style: const TextStyle(color: Colors.indigo, fontSize: 12, fontWeight: FontWeight.w600)),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      Text("$currentAvailable spots left", style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.green, fontSize: 13)),
+                      const SizedBox(height: 6),
+                      Text(_formatDepartureCountdown(ride.departureTime), style: const TextStyle(color: Colors.orangeAccent, fontWeight: FontWeight.bold, fontSize: 12)),
+                      const SizedBox(height: 2),
+                      Text("${_formatDate(ride.departureTime)}, ${_formatTimeOfDeparture(ride.departureTime)}", style: const TextStyle(color: Colors.grey, fontSize: 10)),
+                    ],
+                  )
+                ],
+              ),
+              const SizedBox(height: 20),
+              
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: () {
+                        if (currentUser == null) _showLogin(() { _launchWhatsApp(phone, hostName, ride.pickupPoint, ride.destination); });
+                        else _launchWhatsApp(phone, hostName, ride.pickupPoint, ride.destination);
+                      },
+                      icon: const Icon(Icons.chat_bubble_outline, size: 18),
+                      label: const Text("Chat"),
+                      style: OutlinedButton.styleFrom(foregroundColor: Colors.indigo, side: BorderSide(color: Colors.indigo[100]!), padding: const EdgeInsets.all(12), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  
+                  Expanded(
+                    child: currentUser == null 
+                    ? ElevatedButton(
+                        onPressed: () => _showLogin(() => _sendJoinRequest(docId, ride)),
+                        style: ElevatedButton.styleFrom(backgroundColor: Colors.indigo, foregroundColor: Colors.white, elevation: 0, padding: const EdgeInsets.all(12), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+                        child: const Text("Join Ride", style: TextStyle(fontWeight: FontWeight.bold)),
+                      )
+                    : isMyOwnRide 
+                      ? ElevatedButton(
+                          onPressed: null, 
+                          style: ElevatedButton.styleFrom(backgroundColor: Colors.grey[200], foregroundColor: Colors.grey[600], elevation: 0, padding: const EdgeInsets.all(12), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+                          child: const Text("Your Ride", style: TextStyle(fontWeight: FontWeight.bold)),
+                        )
+                      : StreamBuilder<QuerySnapshot>(
+                          stream: FirebaseFirestore.instance.collection('requests').where('rideId', isEqualTo: docId).where('passengerId', isEqualTo: currentUser.uid).snapshots(),
+                          builder: (ctx, snap) {
+                            String btnText = "Join Ride";
+                            Color btnColor = Colors.indigo;
+                            bool isClickable = true;
+                            if (snap.hasData && snap.data!.docs.isNotEmpty) {
+                              final reqData = snap.data!.docs.first.data() as Map<String, dynamic>;
+                              final status = reqData['status'] ?? 'pending';
+                              if (status == 'accepted') { btnText = "Ride Joined ✓"; btnColor = Colors.green; isClickable = false; } 
+                              else if (status == 'pending') { btnText = "Requested..."; btnColor = Colors.orange; isClickable = false; }
+                            }
+                            if (currentAvailable <= 0 && isClickable) { btnText = "Pool Full"; btnColor = Colors.redAccent; isClickable = false; }
+                            return ElevatedButton(
+                              onPressed: isClickable ? () => _sendJoinRequest(docId, ride) : null,
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: btnColor, disabledBackgroundColor: btnColor.withOpacity(0.8), disabledForegroundColor: Colors.white, foregroundColor: Colors.white, elevation: 0, padding: const EdgeInsets.all(12), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                              ),
+                              child: Text(btnText, style: const TextStyle(fontWeight: FontWeight.bold)),
+                            );
+                          },
+                      ),
+                  ),
+                ],
+              )
+            ],
+          ),
         ),
       ),
     );
@@ -964,11 +918,7 @@ class _RideListScreenState extends State<RideListScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Container(
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(color: Colors.indigo[50], shape: BoxShape.circle),
-              child: Icon(Icons.directions_car_filled_outlined, size: 80, color: Colors.indigo[300]),
-            ),
+            Container(padding: const EdgeInsets.all(20), decoration: BoxDecoration(color: Colors.indigo[50], shape: BoxShape.circle), child: Icon(Icons.directions_car_filled_outlined, size: 80, color: Colors.indigo[300])),
             const SizedBox(height: 24),
             Text("No matching pools found", style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
