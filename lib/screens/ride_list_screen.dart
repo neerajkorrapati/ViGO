@@ -16,6 +16,7 @@ class RideListScreen extends StatefulWidget {
 
 class _RideListScreenState extends State<RideListScreen> {
   final _authService = AuthService();
+  final TextEditingController _profilePhoneController = TextEditingController();
   String _selectedVehicleFilter = 'All'; 
   DateTime? _selectedDateFilter; 
   int _currentTabNavigationIndex = 0; 
@@ -24,6 +25,12 @@ class _RideListScreenState extends State<RideListScreen> {
   void initState() {
     super.initState();
     _cleanUpPastRides(); 
+  }
+
+  @override
+  void dispose() {
+    _profilePhoneController.dispose();
+    super.dispose();
   }
 
   // --- AUTOMATED BACKGROUND HOUSEKEEPING ROUTINE ---
@@ -90,24 +97,64 @@ class _RideListScreenState extends State<RideListScreen> {
     return "${dt.hour}:${dt.minute.toString().padLeft(2, '0')}";
   }
 
-  Future<void> _launchWhatsApp(String phone, String hostName, String pickup, String dest) async {
-    if (phone.isEmpty) {
+  // --- WHATSAPP LOGIC FOR MAIN BUTTON (WITH FALLBACK) ---
+  Future<void> _launchWhatsApp(String ridePhone, String driverId, String hostName, String pickup, String dest) async {
+    String finalPhone = ridePhone;
+
+    // If the ride document is missing the phone number, fetch their latest profile data
+    if (finalPhone.isEmpty) {
+      try {
+        final userDoc = await FirebaseFirestore.instance.collection('users').doc(driverId).get();
+        if (userDoc.exists) {
+          finalPhone = userDoc.data()?['phone'] ?? '';
+        }
+      } catch (e) {
+        debugPrint("Could not fetch updated phone number: $e");
+      }
+    }
+
+    if (finalPhone.isEmpty) {
       _showSnackBar("Student has not listed a valid phone number link.");
       return;
     }
-    final cleanPhone = phone.replaceAll(RegExp(r'[^\d+]'), '');
+
+    final cleanPhone = finalPhone.replaceAll(RegExp(r'[^\d+]'), '');
     String formattedPhone = cleanPhone;
     if (!formattedPhone.startsWith('+')) {
       formattedPhone = formattedPhone.length == 10 ? "91$formattedPhone" : formattedPhone;
     } else {
       formattedPhone = formattedPhone.replaceAll('?', '');
     }
+    
     final templateMessage = Uri.encodeComponent("Hello $hostName, I saw your ViGo Carpool offer from $pickup heading towards $dest. Is there a slot open to split the booking?");
     final url = "https://api.whatsapp.com/send?phone=$formattedPhone&text=$templateMessage";
+    
     try {
       await launchUrl(Uri.parse(url), mode: LaunchMode.platformDefault);
     } catch (e) {
       _showSnackBar("Could not open WhatsApp link automatically.");
+    }
+  }
+
+  // --- WHATSAPP LOGIC FOR DIRECT MESSAGE FROM MANIFEST ---
+  Future<void> _directWhatsAppUser(String targetUserId, String defaultName) async {
+    try {
+      final userDoc = await FirebaseFirestore.instance.collection('users').doc(targetUserId).get();
+      if (!userDoc.exists || (userDoc.data()?['phone'] ?? '').toString().isEmpty) {
+        _showSnackBar("$defaultName hasn't linked a phone number yet.");
+        return;
+      }
+
+      String phone = userDoc.data()!['phone'];
+      phone = phone.replaceAll(RegExp(r'[^\d+]'), '');
+      if (!phone.startsWith('+')) {
+        phone = phone.length == 10 ? "91$phone" : phone;
+      }
+      
+      final url = "https://api.whatsapp.com/send?phone=$phone&text=Hey $defaultName! Reaching out about our ViGo carpool.";
+      await launchUrl(Uri.parse(url), mode: LaunchMode.platformDefault);
+    } catch (e) {
+      _showSnackBar("Could not open WhatsApp.");
     }
   }
 
@@ -179,6 +226,29 @@ class _RideListScreenState extends State<RideListScreen> {
       }
     } catch (e) {
       _showSnackBar("Network Error: Could not process request.");
+    }
+  }
+
+  Future<void> _updatePhoneNumber(String newPhone) async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
+    final cleanPhone = newPhone.trim();
+    if (cleanPhone.isEmpty || cleanPhone.length < 10) {
+      _showSnackBar("Please specify a valid 10-digit phone number.");
+      return;
+    }
+
+    try {
+      await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
+        'phone': cleanPhone,
+        'profileComplete': true, 
+      }, SetOptions(merge: true));
+
+      _showSnackBar("🛡️ Contact information saved successfully!");
+      setState(() {}); 
+    } catch (e) {
+      _showSnackBar("Database error writing profile metadata: $e");
     }
   }
 
@@ -333,6 +403,7 @@ class _RideListScreenState extends State<RideListScreen> {
                 
                 String hostGender = rideData['driverGender'] ?? 'Male'; 
                 occupants.add({
+                  'userId': rideData['driverId'] ?? rideId, // Tracking Host ID
                   'name': rideData['driverName'] ?? 'Host',
                   'role': 'Host', 
                   'gender': hostGender,
@@ -344,6 +415,7 @@ class _RideListScreenState extends State<RideListScreen> {
                     final pData = doc.data() as Map<String, dynamic>;
                     String pGender = pData['passengerGender'] ?? 'Male'; 
                     occupants.add({
+                      'userId': pData['passengerId'], // Tracking Passenger ID
                       'name': pData['passengerName'] ?? 'Passenger',
                       'role': 'Passenger',
                       'gender': pGender,
@@ -373,23 +445,7 @@ class _RideListScreenState extends State<RideListScreen> {
                     ),
                     const SizedBox(height: 24),
                     
-                    ListView.builder(
-                      shrinkWrap: true,
-                      physics: const NeverScrollableScrollPhysics(),
-                      itemCount: occupants.length,
-                      itemBuilder: (context, index) {
-                        final occ = occupants[index];
-                        return ListTile(
-                          contentPadding: EdgeInsets.zero,
-                          leading: CircleAvatar(
-                            backgroundColor: (occ['color'] as Color).withOpacity(0.1),
-                            child: Icon(occ['role'] == 'Host' ? Icons.star : Icons.person, color: occ['color'], size: 18),
-                          ),
-                          title: Text(occ['name'], style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
-                          subtitle: Text(occ['role'], style: TextStyle(color: occ['role'] == 'Host' ? Colors.indigo : Colors.grey, fontSize: 12)),
-                        );
-                      },
-                    ),
+                    _buildOccupantList(occupants),
                     const SizedBox(height: 16),
                   ],
                 );
@@ -401,24 +457,53 @@ class _RideListScreenState extends State<RideListScreen> {
     );
   }
 
+  Widget _buildOccupantList(List<Map<String, dynamic>> occupants) {
+    final currentUserId = FirebaseAuth.instance.currentUser?.uid;
+
+    return ListView.builder(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      itemCount: occupants.length,
+      itemBuilder: (context, index) {
+        final occ = occupants[index];
+        final bool isMe = occ['userId'] == currentUserId;
+
+        return ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: CircleAvatar(
+            backgroundColor: (occ['color'] as Color).withOpacity(0.1),
+            child: Icon(occ['role'] == 'Host' ? Icons.star : Icons.person, color: occ['color'], size: 18),
+          ),
+          title: Text(isMe ? "${occ['name']} (You)" : occ['name'], style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+          subtitle: Text(occ['role'], style: TextStyle(color: occ['role'] == 'Host' ? Colors.indigo : Colors.grey, fontSize: 12)),
+          
+          // The WhatsApp Direct Chat Button
+          trailing: isMe ? null : IconButton(
+            icon: const Icon(Icons.chat_bubble_outline, color: Colors.green),
+            tooltip: "Message on WhatsApp",
+            onPressed: () => _directWhatsAppUser(occ['userId'], occ['name']),
+          ),
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFFF8F9FA), 
       appBar: AppBar(
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const SizedBox(height: 4),
-            Image.network("/vigo_full_logo.jpeg", height: 28, fit: BoxFit.contain, errorBuilder: (context, error, stackTrace) => const Text("ViGo", style: TextStyle(fontWeight: FontWeight.w900, fontSize: 24, color: Colors.indigo))),
-            const SizedBox(height: 2),
-            const Text("VIT Vellore Campus Transit Network", style: TextStyle(fontSize: 11, color: Colors.grey, fontWeight: FontWeight.w500)),
-          ],
-        ),
         backgroundColor: Colors.white,
         elevation: 0,
         automaticallyImplyLeading: false, 
+        title: Padding(
+          padding: const EdgeInsets.only(left: 8.0),
+          child: Image.network(
+            "/vigo_full_logo.jpeg", 
+            height: 35, 
+            fit: BoxFit.contain,
+          ),
+        ),
         actions: [
           StreamBuilder<User?>(
             stream: _authService.user,
@@ -429,7 +514,6 @@ class _RideListScreenState extends State<RideListScreen> {
           )
         ],
       ),
-      // --- UPDATED BODY LOGIC FOR 3 TABS ---
       body: _currentTabNavigationIndex == 0 
           ? _buildExplorePoolsFeed() 
           : _currentTabNavigationIndex == 1
@@ -445,22 +529,71 @@ class _RideListScreenState extends State<RideListScreen> {
             )
           : null,
           
-      // --- UPDATED BOTTOM NAVIGATION BAR ---
-      bottomNavigationBar: BottomNavigationBar(
-        currentIndex: _currentTabNavigationIndex,
-        selectedItemColor: Colors.indigo,
-        unselectedItemColor: Colors.grey,
-        onTap: (index) => setState(() => _currentTabNavigationIndex = index),
-        items: const [
-          BottomNavigationBarItem(icon: Icon(Icons.explore_outlined), activeIcon: Icon(Icons.explore), label: "Explore Pools"),
-          BottomNavigationBarItem(icon: Icon(Icons.directions_car_outlined), activeIcon: Icon(Icons.directions_car), label: "My Rides"),
-          BottomNavigationBarItem(icon: Icon(Icons.assignment_outlined), activeIcon: Icon(Icons.assignment), label: "My Hub"),
-        ],
+      // --- Dynamic Bottom Navigation Bar with Badges ---
+      bottomNavigationBar: StreamBuilder<User?>(
+        stream: _authService.user,
+        builder: (context, userSnap) {
+          final user = userSnap.data;
+          
+          if (user == null) {
+            return _buildBottomNavWithBadge(0);
+          }
+
+          return StreamBuilder<QuerySnapshot>(
+            stream: FirebaseFirestore.instance
+                .collection('requests')
+                .where('driverId', isEqualTo: user.uid)
+                .where('status', isEqualTo: 'pending')
+                .snapshots(),
+            builder: (context, reqSnap) {
+              int pendingCount = 0;
+              if (reqSnap.hasData) {
+                pendingCount = reqSnap.data!.docs.length;
+              }
+              return _buildBottomNavWithBadge(pendingCount);
+            },
+          );
+        },
       ),
     );
   }
 
-  // --- REUSABLE LOCKED SCREEN UI ---
+  Widget _buildBottomNavWithBadge(int pendingCount) {
+    return BottomNavigationBar(
+      currentIndex: _currentTabNavigationIndex,
+      selectedItemColor: Colors.indigo,
+      unselectedItemColor: Colors.grey,
+      onTap: (index) => setState(() => _currentTabNavigationIndex = index),
+      items: [
+        const BottomNavigationBarItem(
+          icon: Icon(Icons.explore_outlined), 
+          activeIcon: Icon(Icons.explore), 
+          label: "Explore Pools"
+        ),
+        const BottomNavigationBarItem(
+          icon: Icon(Icons.directions_car_outlined), 
+          activeIcon: Icon(Icons.directions_car), 
+          label: "My Rides"
+        ),
+        BottomNavigationBarItem(
+          icon: Badge(
+            isLabelVisible: pendingCount > 0,
+            backgroundColor: Colors.orangeAccent,
+            label: Text(pendingCount.toString()),
+            child: const Icon(Icons.assignment_outlined),
+          ),
+          activeIcon: Badge(
+            isLabelVisible: pendingCount > 0,
+            backgroundColor: Colors.orangeAccent,
+            label: Text(pendingCount.toString()),
+            child: const Icon(Icons.assignment),
+          ),
+          label: "My Hub",
+        ),
+      ],
+    );
+  }
+
   Widget _buildLockedScreen(String title, String subtitle) {
     return Center(
       child: Padding(
@@ -530,7 +663,6 @@ class _RideListScreenState extends State<RideListScreen> {
     );
   }
 
-  // --- NEW: MY RIDES SCREEN (CONFIRMED ITINERARIES) ---
   Widget _buildMyRidesScreen() {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) {
@@ -568,12 +700,9 @@ class _RideListScreenState extends State<RideListScreen> {
 
   Widget _buildActiveHostingSubView(String uid) {
     return StreamBuilder<QuerySnapshot>(
-      // Get all rides where the current user is the driver/host
       stream: FirebaseFirestore.instance.collection('rides').where('driverId', isEqualTo: uid).snapshots(),
       builder: (context, snapshot) {
         if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
-        
-        // Sort locally by time to avoid Firebase indexing requirement
         final docs = snapshot.data!.docs.toList();
         docs.sort((a, b) => (a['departureTime'] as Timestamp).compareTo(b['departureTime'] as Timestamp));
 
@@ -597,7 +726,6 @@ class _RideListScreenState extends State<RideListScreen> {
 
   Widget _buildActiveJoinedSubView(String uid) {
     return StreamBuilder<QuerySnapshot>(
-      // Get all accepted requests for the current user
       stream: FirebaseFirestore.instance.collection('requests').where('passengerId', isEqualTo: uid).where('status', isEqualTo: 'accepted').snapshots(),
       builder: (context, snapshot) {
         if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
@@ -612,13 +740,11 @@ class _RideListScreenState extends State<RideListScreen> {
             final reqData = reqDocs[index].data() as Map<String, dynamic>;
             final String rideId = reqData['rideId'];
 
-            // Fetch the live Ride data so we can display the premium card
             return FutureBuilder<DocumentSnapshot>(
               future: FirebaseFirestore.instance.collection('rides').doc(rideId).get(),
               builder: (ctx, rideSnap) {
                 if (rideSnap.connectionState == ConnectionState.waiting) return const Padding(padding: EdgeInsets.all(20), child: Center(child: CircularProgressIndicator()));
                 
-                // Safety feature: If the host deleted the ride after accepting them
                 if (!rideSnap.hasData || !rideSnap.data!.exists) {
                   return Container(
                     margin: const EdgeInsets.only(bottom: 16),
@@ -652,39 +778,144 @@ class _RideListScreenState extends State<RideListScreen> {
     );
   }
 
-  // --- MY HUB SCREEN (PENDING/ADMIN DUTIES) ---
   Widget _buildDashboardHub() {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) {
       return _buildLockedScreen("Hub Locked", "Please log in to manage incoming ride requests and track your pooling approvals.");
     }
 
-    return DefaultTabController(
-      length: 2,
-      child: Column(
-        children: [
-          Container(
-            color: Colors.white,
-            child: const TabBar(
-              labelColor: Colors.indigo,
-              unselectedLabelColor: Colors.grey,
-              indicatorColor: Colors.indigo,
-              tabs: [
-                Tab(icon: Icon(Icons.arrow_downward), text: "Incoming Invites"),
-                Tab(icon: Icon(Icons.arrow_upward), text: "My Sent Requests"),
+    return Column(
+      children: [
+        _buildProfileSettingsCard(user.uid), 
+        Expanded(
+          child: DefaultTabController(
+            length: 2,
+            child: Column(
+              children: [
+                Container(
+                  color: Colors.white,
+                  child: const TabBar(
+                    labelColor: Colors.indigo,
+                    unselectedLabelColor: Colors.grey,
+                    indicatorColor: Colors.indigo,
+                    tabs: [
+                      Tab(icon: Icon(Icons.arrow_downward), text: "Incoming Invites"),
+                      Tab(icon: Icon(Icons.arrow_upward), text: "My Sent Requests"),
+                    ],
+                  ),
+                ),
+                Expanded(
+                  child: TabBarView(
+                    children: [
+                      _buildIncomingInvitesSubView(user.uid),
+                      _buildSentRequestsSubView(user.uid),
+                    ],
+                  ),
+                )
               ],
             ),
           ),
-          Expanded(
-            child: TabBarView(
-              children: [
-                _buildIncomingInvitesSubView(user.uid),
-                _buildSentRequestsSubView(user.uid),
-              ],
-            ),
-          )
-        ],
-      ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildProfileSettingsCard(String uid) {
+    return FutureBuilder<DocumentSnapshot>(
+      future: FirebaseFirestore.instance.collection('users').doc(uid).get(),
+      builder: (context, snapshot) {
+        String existingPhone = "";
+        if (snapshot.hasData && snapshot.data!.exists) {
+          final data = snapshot.data!.data() as Map<String, dynamic>?;
+          existingPhone = data?['phone'] ?? "";
+        }
+
+        return Container(
+          margin: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(20),
+            boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 10, offset: const Offset(0, 4))],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Row(
+                    children: [
+                      Icon(Icons.account_circle_outlined, color: Colors.indigo, size: 22),
+                      SizedBox(width: 8),
+                      Text("Account Settings", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                    ],
+                  ),
+                  if (existingPhone.isNotEmpty)
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                      decoration: BoxDecoration(color: Colors.green[50], borderRadius: BorderRadius.circular(12)),
+                      child: const Text("LINKED ✓", style: TextStyle(color: Colors.green, fontSize: 10, fontWeight: FontWeight.bold)),
+                    )
+                  else
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                      decoration: BoxDecoration(color: Colors.orange[50], borderRadius: BorderRadius.circular(12)),
+                      child: const Text("MISSING INFO", style: TextStyle(color: Colors.orange, fontSize: 10, fontWeight: FontWeight.bold)),
+                    )
+                ],
+              ),
+              const SizedBox(height: 8),
+              Text(
+                existingPhone.isNotEmpty 
+                  ? "Your current linked primary contact number is +91 $existingPhone. You can modify it at any time below."
+                  : "You haven't added a phone number yet. Please provide a verified number to allow co-passengers to launch WhatsApp group connections.",
+                style: const TextStyle(color: Colors.black54, fontSize: 12, height: 1.4),
+              ),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  Expanded(
+                    child: SizedBox(
+                      height: 45,
+                      child: TextField(
+                        controller: _profilePhoneController,
+                        keyboardType: TextInputType.phone,
+                        style: const TextStyle(fontSize: 14),
+                        decoration: InputDecoration(
+                          hintText: existingPhone.isNotEmpty ? existingPhone : "Enter 10-digit number",
+                          prefixText: "+91 ",
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: Colors.grey[300]!)),
+                          enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: Colors.grey[200]!)),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  SizedBox(
+                    height: 45,
+                    child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.indigo,
+                        foregroundColor: Colors.white,
+                        elevation: 0,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                      onPressed: () {
+                        _updatePhoneNumber(_profilePhoneController.text);
+                        _profilePhoneController.clear();
+                        FocusScope.of(context).unfocus(); 
+                      },
+                      child: const Text("Save", style: TextStyle(fontWeight: FontWeight.bold)),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 
@@ -886,7 +1117,6 @@ class _RideListScreenState extends State<RideListScreen> {
     if (acceptedPassengers < 0) acceptedPassengers = 0;
     
     int joinedCount = acceptedPassengers + 1; 
-    
     int emptySeats = currentAvailable < 0 ? 0 : currentAvailable;
 
     return InkWell(
@@ -988,12 +1218,22 @@ class _RideListScreenState extends State<RideListScreen> {
                   Expanded(
                     child: OutlinedButton.icon(
                       onPressed: () {
-                        if (currentUser == null) _showLogin(() { _launchWhatsApp(phone, hostName, ride.pickupPoint, ride.destination); });
-                        else _launchWhatsApp(phone, hostName, ride.pickupPoint, ride.destination);
+                        if (currentUser == null) {
+                          _showLogin(() { 
+                            _launchWhatsApp(phone, ride.driverId, hostName, ride.pickupPoint, ride.destination); 
+                          });
+                        } else {
+                          _launchWhatsApp(phone, ride.driverId, hostName, ride.pickupPoint, ride.destination);
+                        }
                       },
                       icon: const Icon(Icons.chat_bubble_outline, size: 18),
                       label: const Text("Chat"),
-                      style: OutlinedButton.styleFrom(foregroundColor: Colors.indigo, side: BorderSide(color: Colors.indigo[100]!), padding: const EdgeInsets.all(12), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.indigo, 
+                        side: BorderSide(color: Colors.indigo[100]!), 
+                        padding: const EdgeInsets.all(12), 
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))
+                      ),
                     ),
                   ),
                   const SizedBox(width: 12),
