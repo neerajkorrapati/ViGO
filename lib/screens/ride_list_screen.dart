@@ -97,7 +97,7 @@ class _RideListScreenState extends State<RideListScreen> {
     return "${dt.hour}:${dt.minute.toString().padLeft(2, '0')}";
   }
 
-  // --- NEW: Time Ago Helper for Post Creation ---
+  // --- TIME AGO HELPER ---
   String _getTimeAgo(dynamic timestamp) {
     if (timestamp == null) return "Posted recently";
     DateTime dt;
@@ -120,7 +120,6 @@ class _RideListScreenState extends State<RideListScreen> {
   Future<void> _launchWhatsApp(String ridePhone, String driverId, String hostName, String pickup, String dest) async {
     String finalPhone = ridePhone;
 
-    // If the ride document is missing the phone number, fetch their latest profile data
     if (finalPhone.isEmpty) {
       try {
         final userDoc = await FirebaseFirestore.instance.collection('users').doc(driverId).get();
@@ -1164,7 +1163,6 @@ class _RideListScreenState extends State<RideListScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(hostName, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
-                        // --- UPDATED: Added "Time Ago" next to the verified badge ---
                         Row(
                           children: [
                             const Text("Verified VIT Student", style: TextStyle(color: Colors.green, fontSize: 11, fontWeight: FontWeight.w500)),
@@ -1227,15 +1225,17 @@ class _RideListScreenState extends State<RideListScreen> {
                         ],
                       ),
                       const SizedBox(height: 4),
-                      // --- UPDATED: Dynamic Red text when ride is full ---
-                      Text(
-                        currentAvailable <= 0 ? "Ride Full" : "$currentAvailable spots left", 
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold, 
-                          color: currentAvailable <= 0 ? Colors.redAccent : Colors.green, 
-                          fontSize: 13
-                        )
-                      ),
+                      // --- UPDATED: Dynamic Red text and Icon when ride is full ---
+                      currentAvailable <= 0 
+                        ? const Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.cancel, size: 14, color: Colors.redAccent),
+                              SizedBox(width: 4),
+                              Text("Ride Full, Cannot join", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.redAccent, fontSize: 13)),
+                            ],
+                          )
+                        : Text("$currentAvailable spots left", style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.green, fontSize: 13)),
                       const SizedBox(height: 6),
                       Text(_formatDepartureCountdown(ride.departureTime), style: const TextStyle(color: Colors.orangeAccent, fontWeight: FontWeight.bold, fontSize: 12)),
                       const SizedBox(height: 2),
