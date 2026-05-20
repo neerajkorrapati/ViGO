@@ -138,8 +138,8 @@ class _RideListScreenState extends State<RideListScreen> {
 
       await FirebaseFirestore.instance.collection('requests').add({
         'rideId': rideId,
-        'driverId': ride.driverId, // DB Field stays safe
-        'driverName': ride.driverName, // DB Field stays safe
+        'driverId': ride.driverId, 
+        'driverName': ride.driverName, 
         'passengerId': user.uid,
         'passengerName': user.displayName ?? 'VIT Student',
         'passengerEmail': user.email ?? '',
@@ -331,11 +331,10 @@ class _RideListScreenState extends State<RideListScreen> {
 
                 List<Map<String, dynamic>> occupants = [];
                 
-                // --- HOST IS ADDED FIRST ---
                 String hostGender = rideData['driverGender'] ?? 'Male'; 
                 occupants.add({
                   'name': rideData['driverName'] ?? 'Host',
-                  'role': 'Host', // Explicitly labeled as Host
+                  'role': 'Host', 
                   'gender': hostGender,
                   'color': hostGender.toString().toLowerCase() == 'female' ? Colors.pink[400] : Colors.blue[400],
                 });
@@ -430,7 +429,13 @@ class _RideListScreenState extends State<RideListScreen> {
           )
         ],
       ),
-      body: _currentTabNavigationIndex == 0 ? _buildExplorePoolsFeed() : _buildDashboardHub(),
+      // --- UPDATED BODY LOGIC FOR 3 TABS ---
+      body: _currentTabNavigationIndex == 0 
+          ? _buildExplorePoolsFeed() 
+          : _currentTabNavigationIndex == 1
+              ? _buildMyRidesScreen() 
+              : _buildDashboardHub(),
+      
       floatingActionButton: _currentTabNavigationIndex == 0
           ? FloatingActionButton.extended(
               onPressed: () => _handleAction(() { Navigator.push(context, MaterialPageRoute(builder: (_) => const CreateRideScreen())); }),
@@ -439,6 +444,8 @@ class _RideListScreenState extends State<RideListScreen> {
               icon: const Icon(Icons.add, color: Colors.white),
             )
           : null,
+          
+      // --- UPDATED BOTTOM NAVIGATION BAR ---
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _currentTabNavigationIndex,
         selectedItemColor: Colors.indigo,
@@ -446,8 +453,34 @@ class _RideListScreenState extends State<RideListScreen> {
         onTap: (index) => setState(() => _currentTabNavigationIndex = index),
         items: const [
           BottomNavigationBarItem(icon: Icon(Icons.explore_outlined), activeIcon: Icon(Icons.explore), label: "Explore Pools"),
+          BottomNavigationBarItem(icon: Icon(Icons.directions_car_outlined), activeIcon: Icon(Icons.directions_car), label: "My Rides"),
           BottomNavigationBarItem(icon: Icon(Icons.assignment_outlined), activeIcon: Icon(Icons.assignment), label: "My Hub"),
         ],
+      ),
+    );
+  }
+
+  // --- REUSABLE LOCKED SCREEN UI ---
+  Widget _buildLockedScreen(String title, String subtitle) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32.0),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.lock_person_outlined, size: 72, color: Colors.grey[400]),
+            const SizedBox(height: 16),
+            Text(title, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
+            Text(subtitle, textAlign: TextAlign.center, style: const TextStyle(color: Colors.grey)),
+            const SizedBox(height: 20),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.indigo, foregroundColor: Colors.white),
+              onPressed: () => _handleAction(() => setState(() {})),
+              child: const Text("Authenticate Profile"),
+            )
+          ],
+        ),
       ),
     );
   }
@@ -497,30 +530,133 @@ class _RideListScreenState extends State<RideListScreen> {
     );
   }
 
+  // --- NEW: MY RIDES SCREEN (CONFIRMED ITINERARIES) ---
+  Widget _buildMyRidesScreen() {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      return _buildLockedScreen("My Rides Locked", "Please log in to view your upcoming confirmed itineraries and active hosting duties.");
+    }
+
+    return DefaultTabController(
+      length: 2,
+      child: Column(
+        children: [
+          Container(
+            color: Colors.white,
+            child: const TabBar(
+              labelColor: Colors.indigo,
+              unselectedLabelColor: Colors.grey,
+              indicatorColor: Colors.indigo,
+              tabs: [
+                Tab(icon: Icon(Icons.star_outline), text: "Hosting"),
+                Tab(icon: Icon(Icons.airline_seat_recline_normal), text: "Joined"),
+              ],
+            ),
+          ),
+          Expanded(
+            child: TabBarView(
+              children: [
+                _buildActiveHostingSubView(user.uid),
+                _buildActiveJoinedSubView(user.uid),
+              ],
+            ),
+          )
+        ],
+      ),
+    );
+  }
+
+  Widget _buildActiveHostingSubView(String uid) {
+    return StreamBuilder<QuerySnapshot>(
+      // Get all rides where the current user is the driver/host
+      stream: FirebaseFirestore.instance.collection('rides').where('driverId', isEqualTo: uid).snapshots(),
+      builder: (context, snapshot) {
+        if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+        
+        // Sort locally by time to avoid Firebase indexing requirement
+        final docs = snapshot.data!.docs.toList();
+        docs.sort((a, b) => (a['departureTime'] as Timestamp).compareTo(b['departureTime'] as Timestamp));
+
+        if (docs.isEmpty) return _buildMiniEmptyState(Icons.drive_eta, "Not hosting any rides", "When you offer a ride, it will appear here for easy access.");
+
+        return ListView.builder(
+          padding: const EdgeInsets.all(16),
+          itemCount: docs.length,
+          itemBuilder: (context, index) {
+            final doc = docs[index];
+            final ride = Ride.fromFirestore(doc);
+            final data = doc.data() as Map<String, dynamic>;
+            final String vehicle = data['vehicleType'] ?? 'Auto';
+            final String phone = data['driverPhone'] ?? '';
+            return _buildPremiumRideCard(ride, vehicle, phone, doc.id, data);
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildActiveJoinedSubView(String uid) {
+    return StreamBuilder<QuerySnapshot>(
+      // Get all accepted requests for the current user
+      stream: FirebaseFirestore.instance.collection('requests').where('passengerId', isEqualTo: uid).where('status', isEqualTo: 'accepted').snapshots(),
+      builder: (context, snapshot) {
+        if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+        final reqDocs = snapshot.data!.docs;
+        
+        if (reqDocs.isEmpty) return _buildMiniEmptyState(Icons.airline_seat_recline_normal, "No confirmed rides yet", "When a host accepts your join request, the confirmed ride will appear here.");
+
+        return ListView.builder(
+          padding: const EdgeInsets.all(16),
+          itemCount: reqDocs.length,
+          itemBuilder: (context, index) {
+            final reqData = reqDocs[index].data() as Map<String, dynamic>;
+            final String rideId = reqData['rideId'];
+
+            // Fetch the live Ride data so we can display the premium card
+            return FutureBuilder<DocumentSnapshot>(
+              future: FirebaseFirestore.instance.collection('rides').doc(rideId).get(),
+              builder: (ctx, rideSnap) {
+                if (rideSnap.connectionState == ConnectionState.waiting) return const Padding(padding: EdgeInsets.all(20), child: Center(child: CircularProgressIndicator()));
+                
+                // Safety feature: If the host deleted the ride after accepting them
+                if (!rideSnap.hasData || !rideSnap.data!.exists) {
+                  return Container(
+                    margin: const EdgeInsets.only(bottom: 16),
+                    padding: const EdgeInsets.all(20),
+                    decoration: BoxDecoration(color: Colors.red[50], borderRadius: BorderRadius.circular(20), border: Border.all(color: Colors.red[100]!)),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Row(children: [Icon(Icons.warning_amber_rounded, color: Colors.redAccent), SizedBox(width: 8), Text("Ride Cancelled", style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold, fontSize: 16))]),
+                        const SizedBox(height: 8),
+                        Text("The host (${reqData['driverName']}) has deleted this route.", style: const TextStyle(color: Colors.black87)),
+                        const SizedBox(height: 12),
+                        OutlinedButton(onPressed: () => FirebaseFirestore.instance.collection('requests').doc(reqDocs[index].id).delete(), style: OutlinedButton.styleFrom(foregroundColor: Colors.redAccent), child: const Text("Clear Warning"))
+                      ],
+                    ),
+                  );
+                }
+
+                final rideDoc = rideSnap.data!;
+                final ride = Ride.fromFirestore(rideDoc);
+                final data = rideDoc.data() as Map<String, dynamic>;
+                final String vehicle = data['vehicleType'] ?? 'Auto';
+                final String phone = data['driverPhone'] ?? '';
+                
+                return _buildPremiumRideCard(ride, vehicle, phone, rideDoc.id, data);
+              },
+            );
+          },
+        );
+      },
+    );
+  }
+
+  // --- MY HUB SCREEN (PENDING/ADMIN DUTIES) ---
   Widget _buildDashboardHub() {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(32.0),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(Icons.lock_person_outlined, size: 72, color: Colors.grey[400]),
-              const SizedBox(height: 16),
-              const Text("Dashboard Locked", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 8),
-              const Text("Please log in to manage incoming ride requests and track your pooling approvals.", textAlign: TextAlign.center, style: TextStyle(color: Colors.grey)),
-              const SizedBox(height: 20),
-              ElevatedButton(
-                style: ElevatedButton.styleFrom(backgroundColor: Colors.indigo, foregroundColor: Colors.white),
-                onPressed: () => _handleAction(() => setState(() {})),
-                child: const Text("Authenticate Profile"),
-              )
-            ],
-          ),
-        ),
-      );
+      return _buildLockedScreen("Hub Locked", "Please log in to manage incoming ride requests and track your pooling approvals.");
     }
 
     return DefaultTabController(
@@ -641,7 +777,6 @@ class _RideListScreenState extends State<RideListScreen> {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      // --- UI STRING CHANGED TO "Host" HERE ---
                       Expanded(child: Text("Pool with ${data['driverName'] ?? 'Host'}", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15), overflow: TextOverflow.ellipsis)),
                       _buildStatusChip(status),
                       IconButton(icon: const Icon(Icons.delete_outline, size: 20, color: Colors.grey), onPressed: () => _confirmClearRequest(doc.id), tooltip: "Cancel or clear request")
@@ -740,7 +875,6 @@ class _RideListScreenState extends State<RideListScreen> {
     final currentUser = FirebaseAuth.instance.currentUser;
     final bool isMyOwnRide = currentUser != null && ride.driverId == currentUser.uid;
     
-    // Safety swap for UI display only (does not break database ID logic)
     String hostName = ride.driverName; 
 
     final rawTotal = rawData['totalSeats'] ?? rawData['seats'] ?? ride.availableSeats;
@@ -748,11 +882,9 @@ class _RideListScreenState extends State<RideListScreen> {
     final rawAvailable = rawData['availableSeats'] ?? rawData['availableseats'] ?? totalCapacity;
     int currentAvailable = rawAvailable is num ? rawAvailable.toInt() : (int.tryParse(rawAvailable.toString()) ?? totalCapacity);
     
-    // --- EXPLICIT MATH FOR THE +1 HOST COUNT ---
     int acceptedPassengers = totalCapacity - currentAvailable;
     if (acceptedPassengers < 0) acceptedPassengers = 0;
     
-    // The total people joined is the Host (+1) plus any accepted passengers
     int joinedCount = acceptedPassengers + 1; 
     
     int emptySeats = currentAvailable < 0 ? 0 : currentAvailable;
