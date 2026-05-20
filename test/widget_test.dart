@@ -1,11 +1,17 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:vigo/main.dart';
+import 'package:vigo/main.dart'; // Your import is perfectly correct here
 
 void main() {
-  testWidgets('Vi Go app loads', (WidgetTester tester) async {
+  testWidgets('ViGo app loads to landing screen', (WidgetTester tester) async {
+    
+    // 1. FIXED: Capital G in ViGoApp
+    await tester.pumpWidget(const ViGoApp());
 
-    await tester.pumpWidget(const VigoApp());
+    // 2. We need to wait a second for the fade-in animation to finish!
+    await tester.pumpAndSettle();
 
-    expect(find.text('Firebase Connected 🚀'), findsOneWidget);
+    // 3. FIXED: Look for the actual text on your new landing page
+    expect(find.text('Campus Transit, Simplified.'), findsOneWidget);
+    
   });
 }

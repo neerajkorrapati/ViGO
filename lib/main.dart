@@ -1,31 +1,42 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
-import 'screens/ride_list_screen.dart';
+import 'firebase_options.dart'; // Required for modern FlutterFire web setup
+import 'screens/landing_screen.dart';
 
 void main() async {
+  // Ensure the Flutter engine is fully initialized before talking to native plugins like Firebase
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Initialize Firebase securely for your specific platform (Web, Android, iOS)
   await Firebase.initializeApp(
-    options: const FirebaseOptions(
-      apiKey: "AIzaSyDjDNSZ8QY1BB1hCfMpomJWZfJm4eBIpwE",
-  authDomain: "vigo1-d2128.firebaseapp.com",
-  projectId: "vigo1-d2128",
-  storageBucket: "vigo1-d2128.firebasestorage.app",
-  messagingSenderId: "305617221299",
-  appId: "1:305617221299:web:2fc7138ea1d240f6b562c6"
-    ),
+    options: DefaultFirebaseOptions.currentPlatform,
   );
-  runApp(const VigoApp());
+
+  // Boot up the application
+  runApp(const ViGoApp());
 }
 
-class VigoApp extends StatelessWidget {
-  const VigoApp({super.key});
+class ViGoApp extends StatelessWidget {
+  const ViGoApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData(useMaterial3: true, colorSchemeSeed: Colors.indigo),
-      home: const RideListScreen(),
+      title: 'ViGo - VIT Carpool',
+      debugShowCheckedModeBanner: false, // Removes the red debug banner for a premium feel
+      theme: ThemeData(
+        primarySwatch: Colors.indigo,
+        scaffoldBackgroundColor: const Color(0xFFF8F9FA), // A sleek off-white background
+        useMaterial3: true, // Enables modern, rounded Material Design 3 components
+        appBarTheme: const AppBarTheme(
+          backgroundColor: Colors.white,
+          elevation: 0,
+          iconTheme: IconThemeData(color: Colors.indigo),
+          titleTextStyle: TextStyle(color: Colors.black87, fontSize: 20, fontWeight: FontWeight.bold),
+        ),
+      ),
+      // Set the very first screen the user sees to your new cinematic landing page
+      home: const LandingScreen(), 
     );
   }
-} 
+}
