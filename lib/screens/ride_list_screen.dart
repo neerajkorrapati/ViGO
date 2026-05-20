@@ -97,6 +97,25 @@ class _RideListScreenState extends State<RideListScreen> {
     return "${dt.hour}:${dt.minute.toString().padLeft(2, '0')}";
   }
 
+  // --- NEW: Time Ago Helper for Post Creation ---
+  String _getTimeAgo(dynamic timestamp) {
+    if (timestamp == null) return "Posted recently";
+    DateTime dt;
+    if (timestamp is Timestamp) {
+      dt = timestamp.toDate();
+    } else if (timestamp is String) {
+      dt = DateTime.tryParse(timestamp) ?? DateTime.now();
+    } else {
+      return "Posted recently";
+    }
+
+    final diff = DateTime.now().difference(dt);
+    if (diff.inDays > 0) return "Posted ${diff.inDays}d ago";
+    if (diff.inHours > 0) return "Posted ${diff.inHours}h ago";
+    if (diff.inMinutes > 0) return "Posted ${diff.inMinutes}m ago";
+    return "Posted just now";
+  }
+
   // --- WHATSAPP LOGIC FOR MAIN BUTTON (WITH FALLBACK) ---
   Future<void> _launchWhatsApp(String ridePhone, String driverId, String hostName, String pickup, String dest) async {
     String finalPhone = ridePhone;
@@ -403,7 +422,7 @@ class _RideListScreenState extends State<RideListScreen> {
                 
                 String hostGender = rideData['driverGender'] ?? 'Male'; 
                 occupants.add({
-                  'userId': rideData['driverId'] ?? rideId, // Tracking Host ID
+                  'userId': rideData['driverId'] ?? rideId, 
                   'name': rideData['driverName'] ?? 'Host',
                   'role': 'Host', 
                   'gender': hostGender,
@@ -415,7 +434,7 @@ class _RideListScreenState extends State<RideListScreen> {
                     final pData = doc.data() as Map<String, dynamic>;
                     String pGender = pData['passengerGender'] ?? 'Male'; 
                     occupants.add({
-                      'userId': pData['passengerId'], // Tracking Passenger ID
+                      'userId': pData['passengerId'], 
                       'name': pData['passengerName'] ?? 'Passenger',
                       'role': 'Passenger',
                       'gender': pGender,
@@ -477,7 +496,6 @@ class _RideListScreenState extends State<RideListScreen> {
           title: Text(isMe ? "${occ['name']} (You)" : occ['name'], style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
           subtitle: Text(occ['role'], style: TextStyle(color: occ['role'] == 'Host' ? Colors.indigo : Colors.grey, fontSize: 12)),
           
-          // The WhatsApp Direct Chat Button
           trailing: isMe ? null : IconButton(
             icon: const Icon(Icons.chat_bubble_outline, color: Colors.green),
             tooltip: "Message on WhatsApp",
@@ -1146,7 +1164,14 @@ class _RideListScreenState extends State<RideListScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(hostName, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
-                        const Text("Verified VIT Student", style: TextStyle(color: Colors.green, fontSize: 11, fontWeight: FontWeight.w500)),
+                        // --- UPDATED: Added "Time Ago" next to the verified badge ---
+                        Row(
+                          children: [
+                            const Text("Verified VIT Student", style: TextStyle(color: Colors.green, fontSize: 11, fontWeight: FontWeight.w500)),
+                            const Text(" • ", style: TextStyle(color: Colors.grey, fontSize: 11)),
+                            Text(_getTimeAgo(rawData['timestamp'] ?? rawData['createdAt']), style: const TextStyle(color: Colors.grey, fontSize: 11)),
+                          ],
+                        ),
                       ],
                     ),
                   ),
@@ -1202,7 +1227,15 @@ class _RideListScreenState extends State<RideListScreen> {
                         ],
                       ),
                       const SizedBox(height: 4),
-                      Text("$currentAvailable spots left", style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.green, fontSize: 13)),
+                      // --- UPDATED: Dynamic Red text when ride is full ---
+                      Text(
+                        currentAvailable <= 0 ? "Ride Full" : "$currentAvailable spots left", 
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold, 
+                          color: currentAvailable <= 0 ? Colors.redAccent : Colors.green, 
+                          fontSize: 13
+                        )
+                      ),
                       const SizedBox(height: 6),
                       Text(_formatDepartureCountdown(ride.departureTime), style: const TextStyle(color: Colors.orangeAccent, fontWeight: FontWeight.bold, fontSize: 12)),
                       const SizedBox(height: 2),
