@@ -17,6 +17,13 @@ class RideListScreen extends StatefulWidget {
 class _RideListScreenState extends State<RideListScreen> {
   final _authService = AuthService();
   final TextEditingController _profilePhoneController = TextEditingController();
+  final TextEditingController _locationSearchController = TextEditingController();
+  
+  // --- Filter State Variables ---
+  String _locationSearchQuery = '';
+  String _locationFilterType = 'Departure'; // Options: 'Departure' or 'Destination'
+  String _timingSortOrder = 'Earliest'; // Options: 'Earliest' or 'Latest'
+
   String _selectedVehicleFilter = 'All'; 
   DateTime? _selectedDateFilter; 
   int _currentTabNavigationIndex = 0; 
@@ -30,9 +37,11 @@ class _RideListScreenState extends State<RideListScreen> {
   @override
   void dispose() {
     _profilePhoneController.dispose();
+    _locationSearchController.dispose();
     super.dispose();
   }
 
+  // --- AUTOMATED BACKGROUND HOUSEKEEPING ROUTINE ---
   Future<void> _cleanUpPastRides() async {
     try {
       final now = Timestamp.now();
@@ -96,6 +105,7 @@ class _RideListScreenState extends State<RideListScreen> {
     return "${dt.hour}:${dt.minute.toString().padLeft(2, '0')}";
   }
 
+  // --- TIME AGO HELPER ---
   String _getTimeAgo(dynamic timestamp) {
     if (timestamp == null) return "Posted recently";
     DateTime dt;
@@ -114,9 +124,9 @@ class _RideListScreenState extends State<RideListScreen> {
     return "Posted just now";
   }
 
+  // --- WHATSAPP LOGIC FOR MAIN BUTTON (WITH FALLBACK) ---
   Future<void> _launchWhatsApp(String ridePhone, String driverId, String hostName, String pickup, String dest) async {
     String finalPhone = ridePhone;
-
     if (finalPhone.isEmpty) {
       try {
         final userDoc = await FirebaseFirestore.instance.collection('users').doc(driverId).get();
@@ -151,6 +161,7 @@ class _RideListScreenState extends State<RideListScreen> {
     }
   }
 
+  // --- WHATSAPP LOGIC FOR DIRECT MESSAGE FROM MANIFEST ---
   Future<void> _directWhatsAppUser(String targetUserId, String defaultName) async {
     try {
       final userDoc = await FirebaseFirestore.instance.collection('users').doc(targetUserId).get();
@@ -187,7 +198,7 @@ class _RideListScreenState extends State<RideListScreen> {
         return;
       }
       
-      String passengerGender = 'Male'; 
+      String passengerGender = 'Male';
       try {
          final userDoc = await FirebaseFirestore.instance.collection('users').doc(user.uid).get();
          if (userDoc.exists) {
@@ -229,7 +240,6 @@ class _RideListScreenState extends State<RideListScreen> {
         int seatsLeft = 0;
         if (rawSeats is num) seatsLeft = rawSeats.toInt();
         else if (rawSeats is String) seatsLeft = int.tryParse(rawSeats) ?? 0;
-
         if (seatsLeft <= 0) { _showSnackBar("Cannot accept. Vehicle capacity is entirely full."); return; }
         await requestRef.update({'status': 'accepted'});
         await rideRef.update({'availableSeats': seatsLeft - 1});
@@ -258,7 +268,6 @@ class _RideListScreenState extends State<RideListScreen> {
         'phone': cleanPhone,
         'profileComplete': true, 
       }, SetOptions(merge: true));
-
       _showSnackBar("🛡️ Contact information saved successfully!");
       setState(() {}); 
     } catch (e) {
@@ -376,7 +385,6 @@ class _RideListScreenState extends State<RideListScreen> {
           .where('passengerId', isEqualTo: user.uid)
           .where('status', isEqualTo: 'accepted')
           .get();
-      
       if (checkSnap.docs.isEmpty) {
         _showSnackBar("🔒 You must be accepted into this ride to view the passenger manifest.");
         return;
@@ -384,7 +392,6 @@ class _RideListScreenState extends State<RideListScreen> {
     }
 
     if (!mounted) return;
-
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -414,7 +421,6 @@ class _RideListScreenState extends State<RideListScreen> {
                 }
 
                 List<Map<String, dynamic>> occupants = [];
-                
                 String hostGender = rideData['driverGender'] ?? 'Male'; 
                 occupants.add({
                   'userId': rideData['driverId'] ?? rideId, 
@@ -423,7 +429,6 @@ class _RideListScreenState extends State<RideListScreen> {
                   'gender': hostGender,
                   'color': hostGender.toString().toLowerCase() == 'female' ? Colors.pink[400] : Colors.blue[400],
                 });
-
                 if (snapshot.hasData) {
                   for (var doc in snapshot.data!.docs) {
                     final pData = doc.data() as Map<String, dynamic>;
@@ -458,7 +463,6 @@ class _RideListScreenState extends State<RideListScreen> {
                       ),
                     ),
                     const SizedBox(height: 24),
-                    
                     _buildOccupantList(occupants),
                     const SizedBox(height: 16),
                   ],
@@ -473,7 +477,6 @@ class _RideListScreenState extends State<RideListScreen> {
 
   Widget _buildOccupantList(List<Map<String, dynamic>> occupants) {
     final currentUserId = FirebaseAuth.instance.currentUser?.uid;
-
     return ListView.builder(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
@@ -485,12 +488,11 @@ class _RideListScreenState extends State<RideListScreen> {
         return ListTile(
           contentPadding: EdgeInsets.zero,
           leading: CircleAvatar(
-            backgroundColor: (occ['color'] as Color).withOpacity(0.1),
+            backgroundColor: (occ['color'] as Color).withValues(alpha: 0.1),
             child: Icon(occ['role'] == 'Host' ? Icons.star : Icons.person, color: occ['color'], size: 18),
           ),
           title: Text(isMe ? "${occ['name']} (You)" : occ['name'], style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
           subtitle: Text(occ['role'], style: TextStyle(color: occ['role'] == 'Host' ? Colors.indigo : Colors.grey, fontSize: 12)),
-          
           trailing: isMe ? null : IconButton(
             icon: const Icon(Icons.chat_bubble_outline, color: Colors.green),
             tooltip: "Message on WhatsApp",
@@ -546,7 +548,6 @@ class _RideListScreenState extends State<RideListScreen> {
         stream: _authService.user,
         builder: (context, userSnap) {
           final user = userSnap.data;
-          
           if (user == null) {
             return _buildBottomNavWithBadge(0);
           }
@@ -637,22 +638,59 @@ class _RideListScreenState extends State<RideListScreen> {
         _buildFilterDock(), 
         Expanded(
           child: StreamBuilder<QuerySnapshot>(
-            stream: FirebaseFirestore.instance.collection('rides').orderBy('departureTime').snapshots(),
+            stream: FirebaseFirestore.instance.collection('rides').snapshots(),
             builder: (context, snapshot) {
               if (snapshot.hasError) return Center(child: Text("Database Connection Issue: ${snapshot.error}"));
               if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
+              
               final rawRides = snapshot.data?.docs ?? [];
+              final now = DateTime.now();
+
+              // 1. Dynamic Dropdown Location & Upcoming Rides Filters
               final rides = rawRides.where((doc) {
                 final data = doc.data() as Map<String, dynamic>;
+                
+                if (data['departureTime'] != null) {
+                  final depTime = (data['departureTime'] as Timestamp).toDate();
+                  if (depTime.isBefore(now)) return false; 
+                }
+
                 final vType = data['vehicleType'] ?? 'Auto'; 
                 bool matchesVehicle = _selectedVehicleFilter == 'All' || vType.toLowerCase() == _selectedVehicleFilter.toLowerCase();
-                bool matchesDate = true;
+                if (!matchesVehicle) return false;
+
                 if (_selectedDateFilter != null && data['departureTime'] != null) {
                   final depDate = (data['departureTime'] as Timestamp).toDate();
-                  matchesDate = depDate.year == _selectedDateFilter!.year && depDate.month == _selectedDateFilter!.month && depDate.day == _selectedDateFilter!.day;
+                  bool matchesDate = depDate.year == _selectedDateFilter!.year && depDate.month == _selectedDateFilter!.month && depDate.day == _selectedDateFilter!.day;
+                  if (!matchesDate) return false;
                 }
-                return matchesVehicle && matchesDate;
+
+                if (_locationSearchQuery.isNotEmpty) {
+                  final query = _locationSearchQuery.toLowerCase();
+                  if (_locationFilterType == 'Departure') {
+                    final pickup = (data['pickupPoint'] ?? '').toString().toLowerCase();
+                    if (!pickup.contains(query)) return false;
+                  } else {
+                    final destination = (data['destination'] ?? '').toString().toLowerCase();
+                    if (!destination.contains(query)) return false;
+                  }
+                }
+
+                return true;
               }).toList();
+
+              // 2. Sorting Logic
+              rides.sort((a, b) {
+                final aData = a.data() as Map<String, dynamic>;
+                final bData = b.data() as Map<String, dynamic>;
+                final Timestamp? aTime = aData['departureTime'];
+                final Timestamp? bTime = bData['departureTime'];
+                
+                if (aTime == null || bTime == null) return 0;
+                return _timingSortOrder == 'Earliest' 
+                    ? aTime.compareTo(bTime) 
+                    : bTime.compareTo(aTime);
+              });
 
               if (rides.isEmpty) return _buildEmptyState();
 
@@ -672,6 +710,216 @@ class _RideListScreenState extends State<RideListScreen> {
           ),
         ),
       ],
+    );
+  }
+
+  Widget _buildFilterDock() {
+    final filterOptions = [
+      {'label': 'All Pools', 'icon': Icons.all_inclusive},
+      {'label': 'Auto', 'icon': Icons.electric_rickshaw},
+      {'label': 'Cab', 'icon': Icons.local_taxi}
+    ];
+
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      child: Column(
+        children: [
+          // --- ROW 1: PREMIUM SEARCH BAR & SCOPE TOGGLE ---
+          Row(
+            children: [
+              Expanded(
+                child: Container(
+                  height: 46,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF1F3F5),
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: TextField(
+                    controller: _locationSearchController,
+                    onChanged: (val) => setState(() => _locationSearchQuery = val),
+                    style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: Colors.black87),
+                    decoration: InputDecoration(
+                      hintText: _locationFilterType == 'Departure' ? "Search pickup point..." : "Search drop point...",
+                      hintStyle: TextStyle(color: Colors.grey[500], fontSize: 14),
+                      prefixIcon: const Icon(Icons.search_rounded, size: 20, color: Colors.indigo),
+                      suffixIcon: _locationSearchQuery.isNotEmpty
+                          ? IconButton(
+                              icon: const Icon(Icons.clear_rounded, size: 18, color: Colors.black54),
+                              onPressed: () {
+                                _locationSearchController.clear();
+                                setState(() => _locationSearchQuery = '');
+                              },
+                            )
+                          : null,
+                      border: InputBorder.none,
+                      contentPadding: const EdgeInsets.symmetric(vertical: 13),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Container(
+                height: 46,
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                decoration: BoxDecoration(
+                  color: Colors.indigo[50],
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: Colors.indigo.withValues(alpha: 0.1)),
+                ),
+                child: DropdownButtonHideUnderline(
+                  child: DropdownButton<String>(
+                    value: _locationFilterType,
+                    icon: const Icon(Icons.arrow_drop_down_rounded, color: Colors.indigo, size: 24),
+                    dropdownColor: Colors.white,
+                    borderRadius: BorderRadius.circular(14),
+                    style: const TextStyle(color: Colors.indigo, fontWeight: FontWeight.bold, fontSize: 13),
+                    items: const [
+                      DropdownMenuItem(value: 'Departure', child: Text("By Pickup")),
+                      DropdownMenuItem(value: 'Destination', child: Text("By Drop")),
+                    ],
+                    onChanged: (val) => setState(() => _locationFilterType = val!),
+                  ),
+                ),
+              )
+            ],
+          ),
+          const SizedBox(height: 12),
+          
+          // --- ROW 2: SORT DROPDOWN & CHIP SEGMENTS ---
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Container(
+                height: 38,
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.grey[200]!),
+                ),
+                child: DropdownButtonHideUnderline(
+                  child: DropdownButton<String>(
+                    value: _timingSortOrder,
+                    icon: const Icon(Icons.unfold_more_rounded, color: Colors.black54, size: 16),
+                    dropdownColor: Colors.white,
+                    borderRadius: BorderRadius.circular(12),
+                    style: const TextStyle(color: Colors.black87, fontWeight: FontWeight.w600, fontSize: 12),
+                    items: const [
+                      DropdownMenuItem(value: 'Earliest', child: Text("Earliest First")),
+                      DropdownMenuItem(value: 'Latest', child: Text("Latest First")),
+                    ],
+                    onChanged: (val) => setState(() => _timingSortOrder = val!),
+                  ),
+                ),
+              ),
+              Expanded(
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  reverse: true,
+                  child: Row(
+                    children: [
+                      ...filterOptions.map((opt) {
+                        final isSelected = _selectedVehicleFilter == opt['label']!.toString().split(' ')[0];
+                        return Padding(
+                          padding: const EdgeInsets.only(left: 6),
+                          child: SizedBox(
+                            height: 38,
+                            child: FilterChip(
+                              showCheckmark: false,
+                              avatar: Icon(
+                                opt['icon'] as IconData, 
+                                size: 14, 
+                                color: isSelected ? Colors.white : Colors.indigo
+                              ),
+                              label: Text(opt['label'] as String, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+                              selected: isSelected,
+                              selectedColor: Colors.indigo,
+                              labelStyle: TextStyle(
+                                color: isSelected ? Colors.white : Colors.black87, 
+                              ),
+                              backgroundColor: const Color(0xFFF1F3F5),
+                              padding: const EdgeInsets.symmetric(horizontal: 4),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12), 
+                                side: BorderSide.none
+                              ),
+                              onSelected: (_) => setState(() => _selectedVehicleFilter = opt['label']!.toString().split(' ')[0]),
+                            ),
+                          ),
+                        );
+                      }),
+                      const SizedBox(width: 6),
+                      if (_selectedDateFilter != null)
+                        Padding(
+                          padding: const EdgeInsets.only(left: 4),
+                          child: SizedBox(
+                            height: 38,
+                            child: InputChip(
+                              label: Text(_formatDate(_selectedDateFilter!), style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)), 
+                              selected: true, 
+                              selectedColor: Colors.teal,
+                              labelStyle: const TextStyle(color: Colors.white),
+                              onDeleted: () => setState(() => _selectedDateFilter = null),
+                              deleteIconColor: Colors.white, 
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: BorderSide.none),
+                            ),
+                          ),
+                        )
+                      else
+                        Container(
+                          height: 38,
+                          width: 38,
+                          margin: const EdgeInsets.only(left: 4),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFE0F2F1),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: IconButton(
+                            icon: const Icon(Icons.calendar_month_rounded, color: Colors.teal, size: 20), 
+                            tooltip: "Select departure date filter",
+                            padding: EdgeInsets.zero,
+                            onPressed: () async {
+                              final picked = await showDatePicker(
+                                context: context, 
+                                initialDate: DateTime.now(), 
+                                firstDate: DateTime.now().subtract(const Duration(days: 1)), 
+                                lastDate: DateTime.now().add(const Duration(days: 60)),
+                                builder: (context, child) {
+                                  return Theme(
+                                    data: Theme.of(context).copyWith(
+                                      colorScheme: const ColorScheme.light(
+                                        primary: Colors.indigo,
+                                        onPrimary: Colors.white,
+                                        onSurface: Colors.black87,
+                                      ),
+                                    ),
+                                    child: child!,
+                                  );
+                                }
+                              );
+                              if (picked != null) setState(() => _selectedDateFilter = picked);
+                            },
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 
@@ -880,8 +1128,8 @@ class _RideListScreenState extends State<RideListScreen> {
               const SizedBox(height: 8),
               Text(
                 existingPhone.isNotEmpty 
-                  ? "Your current linked primary contact number is +91 $existingPhone. You can modify it at any time below."
-                  : "You haven't added a phone number yet. Please provide a verified number to allow co-passengers to launch WhatsApp group connections.",
+                    ? "Your current linked primary contact number is +91 $existingPhone. You can modify it at any time below."
+                    : "You haven't added a phone number yet. Please provide a verified number to allow co-passengers to launch WhatsApp group connections.",
                 style: const TextStyle(color: Colors.black54, fontSize: 12, height: 1.4),
               ),
               const SizedBox(height: 16),
@@ -1066,54 +1314,6 @@ class _RideListScreenState extends State<RideListScreen> {
     );
   }
 
-  Widget _buildFilterDock() {
-    final filterOptions = [{'label': 'All Pools', 'icon': Icons.all_inclusive}, {'label': 'Auto', 'icon': Icons.electric_rickshaw}, {'label': 'Cab', 'icon': Icons.local_taxi}];
-    return Container(
-      width: double.infinity, color: Colors.white, padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: Row(
-          children: [
-            ...filterOptions.map((opt) {
-              final isSelected = _selectedVehicleFilter == opt['label']!.toString().split(' ')[0];
-              return Padding(
-                padding: const EdgeInsets.only(right: 10),
-                child: FilterChip(
-                  showCheckmark: false,
-                  avatar: Icon(opt['icon'] as IconData, size: 16, color: isSelected ? Colors.white : Colors.indigo),
-                  label: Text(opt['label'] as String),
-                  selected: isSelected,
-                  selectedColor: Colors.indigo,
-                  labelStyle: TextStyle(color: isSelected ? Colors.white : Colors.black87, fontWeight: isSelected ? FontWeight.bold : FontWeight.normal),
-                  backgroundColor: Colors.grey[100],
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20), side: BorderSide.none),
-                  onSelected: (_) => setState(() => _selectedVehicleFilter = opt['label']!.toString().split(' ')[0]),
-                ),
-              );
-            }),
-            Container(width: 1, height: 24, margin: const EdgeInsets.symmetric(horizontal: 4), color: Colors.grey[300]),
-            const SizedBox(width: 8),
-            if (_selectedDateFilter != null)
-              InputChip(
-                label: Text(_formatDate(_selectedDateFilter!)), selected: true, selectedColor: Colors.teal,
-                labelStyle: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-                onDeleted: () => setState(() => _selectedDateFilter = null),
-                deleteIconColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20), side: BorderSide.none),
-              )
-            else
-              IconButton(
-                icon: const Icon(Icons.calendar_month, color: Colors.indigo), tooltip: "Select departure date filter",
-                onPressed: () async {
-                  final picked = await showDatePicker(context: context, initialDate: DateTime.now(), firstDate: DateTime.now().subtract(const Duration(days: 1)), lastDate: DateTime.now().add(const Duration(days: 60)));
-                  if (picked != null) setState(() => _selectedDateFilter = picked);
-                },
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-
   Widget _buildPremiumRideCard(Ride ride, String vehicle, String phone, String docId, Map<String, dynamic> rawData) {
     final currentUser = FirebaseAuth.instance.currentUser;
     final bool isMyOwnRide = currentUser != null && ride.driverId == currentUser.uid;
@@ -1124,13 +1324,11 @@ class _RideListScreenState extends State<RideListScreen> {
     int totalCapacity = rawTotal is num ? rawTotal.toInt() : (int.tryParse(rawTotal.toString()) ?? 4);
     final rawAvailable = rawData['availableSeats'] ?? rawData['availableseats'] ?? totalCapacity;
     int currentAvailable = rawAvailable is num ? rawAvailable.toInt() : (int.tryParse(rawAvailable.toString()) ?? totalCapacity);
-    
     int acceptedPassengers = totalCapacity - currentAvailable;
     if (acceptedPassengers < 0) acceptedPassengers = 0;
     
-    int joinedCount = acceptedPassengers + 1; 
+    int joinedCount = acceptedPassengers + 1;
     int emptySeats = currentAvailable < 0 ? 0 : currentAvailable;
-
     return InkWell(
       onTap: () => _handleRideTap(docId, rawData, isMyOwnRide, totalCapacity, emptySeats),
       borderRadius: BorderRadius.circular(20),
@@ -1139,7 +1337,7 @@ class _RideListScreenState extends State<RideListScreen> {
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(20),
-          boxShadow: [BoxShadow(color: Colors.black.withAlpha(10), blurRadius: 12, offset: const Offset(0, 4))],
+          boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 12, offset: Offset(0, 4))],
         ),
         child: Padding(
           padding: const EdgeInsets.all(20),
@@ -1246,7 +1444,9 @@ class _RideListScreenState extends State<RideListScreen> {
                     child: OutlinedButton.icon(
                       onPressed: () {
                         if (currentUser == null) {
-                          _showLogin(() { _launchWhatsApp(phone, ride.driverId, hostName, ride.pickupPoint, ride.destination); });
+                          _showLogin(() { 
+                            _launchWhatsApp(phone, ride.driverId, hostName, ride.pickupPoint, ride.destination);
+                          });
                         } else {
                           _launchWhatsApp(phone, ride.driverId, hostName, ride.pickupPoint, ride.destination);
                         }
