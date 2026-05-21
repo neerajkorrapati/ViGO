@@ -796,43 +796,19 @@ class _RideListScreenState extends State<RideListScreen> {
           ),
           const SizedBox(height: 12),
           
-          // --- ROW 2: SORT DROPDOWN & CHIP SEGMENTS ---
+          // --- ROW 2: ALIGNED FILTER CHIPS (LEFT) & TIME DROPDOWN (PINNED ABSOLUTE RIGHT) ---
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Container(
-                height: 38,
-                padding: const EdgeInsets.symmetric(horizontal: 12),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: Colors.grey[200]!),
-                ),
-                child: DropdownButtonHideUnderline(
-                  child: DropdownButton<String>(
-                    value: _timingSortOrder,
-                    icon: const Icon(Icons.unfold_more_rounded, color: Colors.black54, size: 16),
-                    dropdownColor: Colors.white,
-                    borderRadius: BorderRadius.circular(12),
-                    style: const TextStyle(color: Colors.black87, fontWeight: FontWeight.w600, fontSize: 12),
-                    items: const [
-                      DropdownMenuItem(value: 'Earliest', child: Text("Earliest First")),
-                      DropdownMenuItem(value: 'Latest', child: Text("Latest First")),
-                    ],
-                    onChanged: (val) => setState(() => _timingSortOrder = val!),
-                  ),
-                ),
-              ),
               Expanded(
                 child: SingleChildScrollView(
                   scrollDirection: Axis.horizontal,
-                  reverse: true,
                   child: Row(
                     children: [
                       ...filterOptions.map((opt) {
                         final isSelected = _selectedVehicleFilter == opt['label']!.toString().split(' ')[0];
                         return Padding(
-                          padding: const EdgeInsets.only(left: 6),
+                          padding: const EdgeInsets.only(right: 6),
                           child: SizedBox(
                             height: 38,
                             child: FilterChip(
@@ -859,10 +835,10 @@ class _RideListScreenState extends State<RideListScreen> {
                           ),
                         );
                       }),
-                      const SizedBox(width: 6),
+                      const SizedBox(width: 2),
                       if (_selectedDateFilter != null)
                         Padding(
-                          padding: const EdgeInsets.only(left: 4),
+                          padding: const EdgeInsets.only(right: 4),
                           child: SizedBox(
                             height: 38,
                             child: InputChip(
@@ -880,7 +856,6 @@ class _RideListScreenState extends State<RideListScreen> {
                         Container(
                           height: 38,
                           width: 38,
-                          margin: const EdgeInsets.only(left: 4),
                           decoration: BoxDecoration(
                             color: const Color(0xFFE0F2F1),
                             borderRadius: BorderRadius.circular(12),
@@ -913,6 +888,30 @@ class _RideListScreenState extends State<RideListScreen> {
                           ),
                         ),
                     ],
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Container(
+                height: 38,
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.grey[200]!),
+                ),
+                child: DropdownButtonHideUnderline(
+                  child: DropdownButton<String>(
+                    value: _timingSortOrder,
+                    icon: const Icon(Icons.unfold_more_rounded, color: Colors.black54, size: 16),
+                    dropdownColor: Colors.white,
+                    borderRadius: BorderRadius.circular(12),
+                    style: const TextStyle(color: Colors.black87, fontWeight: FontWeight.w600, fontSize: 12),
+                    items: const [
+                      DropdownMenuItem(value: 'Earliest', child: Text("Earliest First")),
+                      DropdownMenuItem(value: 'Latest', child: Text("Latest First")),
+                    ],
+                    onChanged: (val) => setState(() => _timingSortOrder = val!),
                   ),
                 ),
               ),
