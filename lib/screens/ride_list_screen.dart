@@ -33,7 +33,6 @@ class _RideListScreenState extends State<RideListScreen> {
     super.dispose();
   }
 
-  // --- AUTOMATED BACKGROUND HOUSEKEEPING ROUTINE ---
   Future<void> _cleanUpPastRides() async {
     try {
       final now = Timestamp.now();
@@ -97,7 +96,6 @@ class _RideListScreenState extends State<RideListScreen> {
     return "${dt.hour}:${dt.minute.toString().padLeft(2, '0')}";
   }
 
-  // --- TIME AGO HELPER ---
   String _getTimeAgo(dynamic timestamp) {
     if (timestamp == null) return "Posted recently";
     DateTime dt;
@@ -116,7 +114,6 @@ class _RideListScreenState extends State<RideListScreen> {
     return "Posted just now";
   }
 
-  // --- WHATSAPP LOGIC FOR MAIN BUTTON (WITH FALLBACK) ---
   Future<void> _launchWhatsApp(String ridePhone, String driverId, String hostName, String pickup, String dest) async {
     String finalPhone = ridePhone;
 
@@ -154,7 +151,6 @@ class _RideListScreenState extends State<RideListScreen> {
     }
   }
 
-  // --- WHATSAPP LOGIC FOR DIRECT MESSAGE FROM MANIFEST ---
   Future<void> _directWhatsAppUser(String targetUserId, String defaultName) async {
     try {
       final userDoc = await FirebaseFirestore.instance.collection('users').doc(targetUserId).get();
@@ -546,7 +542,6 @@ class _RideListScreenState extends State<RideListScreen> {
             )
           : null,
           
-      // --- Dynamic Bottom Navigation Bar with Badges ---
       bottomNavigationBar: StreamBuilder<User?>(
         stream: _authService.user,
         builder: (context, userSnap) {
@@ -1225,7 +1220,6 @@ class _RideListScreenState extends State<RideListScreen> {
                         ],
                       ),
                       const SizedBox(height: 4),
-                      // --- UPDATED: Dynamic Red text and Icon when ride is full ---
                       currentAvailable <= 0 
                         ? const Row(
                             mainAxisSize: MainAxisSize.min,
@@ -1252,9 +1246,7 @@ class _RideListScreenState extends State<RideListScreen> {
                     child: OutlinedButton.icon(
                       onPressed: () {
                         if (currentUser == null) {
-                          _showLogin(() { 
-                            _launchWhatsApp(phone, ride.driverId, hostName, ride.pickupPoint, ride.destination); 
-                          });
+                          _showLogin(() { _launchWhatsApp(phone, ride.driverId, hostName, ride.pickupPoint, ride.destination); });
                         } else {
                           _launchWhatsApp(phone, ride.driverId, hostName, ride.pickupPoint, ride.destination);
                         }
