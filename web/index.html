@@ -33,6 +33,20 @@
 
   <meta name="google-signin-client_id" content="305617221299-akq1cc9bg76f97859lc2jlrht83p1u52.apps.googleusercontent.com">
   <meta name="google-site-verification" content="7k8S_ar6dCrlQHXqGt_l8Bk65jCsNrrH6lBSq7fw3Rs" />
+
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      background-color: #F8F9FA;
+    }
+    /* Forces mobile engines to pass touchscreen drag values directly to the active canvas instantly */
+    flutter-view {
+      touch-action: pan-x pan-y !important;
+      -webkit-overflow-scrolling: touch !important;
+    }
+  </style>
 </head>
 <body>
 
