@@ -638,7 +638,9 @@ class _RideListScreenState extends State<RideListScreen> {
         _buildFilterDock(), 
         Expanded(
           child: StreamBuilder<QuerySnapshot>(
-            stream: FirebaseFirestore.instance.collection('rides').snapshots(),
+            // --- SERVER-SIDE LIMITATION INDUCTION ---
+            // Restricting the payload strictly to the top 30 active pools saves thousands of document reads per day campus-wide.
+            stream: FirebaseFirestore.instance.collection('rides').limit(30).snapshots(),
             builder: (context, snapshot) {
               if (snapshot.hasError) return Center(child: Text("Database Connection Issue: ${snapshot.error}"));
               if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
@@ -647,7 +649,7 @@ class _RideListScreenState extends State<RideListScreen> {
               final now = DateTime.now();
 
               // 1. Dynamic Dropdown Location & Upcoming Rides Filters
-              final rides = rawRides.where((doc) {
+              var rides = rawRides.where((doc) {
                 final data = doc.data() as Map<String, dynamic>;
                 
                 if (data['departureTime'] != null) {
@@ -679,7 +681,12 @@ class _RideListScreenState extends State<RideListScreen> {
                 return true;
               }).toList();
 
-              // 2. Sorting Logic
+              // 2. Client-Side Sublist Trim to target the primary 15 elements
+              if (rides.length > 15) {
+                rides = rides.sublist(0, 15);
+              }
+
+              // 3. Sorting Logic
               rides.sort((a, b) {
                 final aData = a.data() as Map<String, dynamic>;
                 final bData = b.data() as Map<String, dynamic>;
