@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:url_launcher/url_launcher.dart'; 
+import 'dart:html' as html; // Crucial import for handling browser window reload
 import '../models/ride_model.dart';
 import '../services/auth_service.dart';
 import 'onboarding_screen.dart';
@@ -339,7 +340,7 @@ class _RideListScreenState extends State<RideListScreen> {
           children: [
             const Text("Authentication Required", style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
             const SizedBox(height: 12),
-            const Text("Please log in with your verified VIT Google ID to interact with carpool pools.", textAlign: TextAlign.center),
+            const Text("Please log in with your verified VIT Google ID to interact with ViGo.", textAlign: TextAlign.center),
             const SizedBox(height: 32),
             SizedBox(
               width: double.infinity,
@@ -513,7 +514,6 @@ class _RideListScreenState extends State<RideListScreen> {
         automaticallyImplyLeading: false, 
         title: Padding(
           padding: const EdgeInsets.only(left: 8.0),
-          // --- LOGO ROUTING ACTION REGISTERED ---
           child: InkWell(
             onTap: () => setState(() => _currentTabNavigationIndex = 0),
             borderRadius: BorderRadius.circular(8),
@@ -533,7 +533,15 @@ class _RideListScreenState extends State<RideListScreen> {
           StreamBuilder<User?>(
             stream: _authService.user,
             builder: (context, snapshot) {
-              if (snapshot.hasData) return IconButton(icon: const Icon(Icons.logout, color: Colors.redAccent), onPressed: () => _authService.signOut());
+              if (snapshot.hasData) {
+                return IconButton(
+                  icon: const Icon(Icons.logout, color: Colors.redAccent),
+                  onPressed: () async {
+                    await _authService.signOut();
+                    html.window.location.reload(); // Performs clean state web app hard reload
+                  },
+                );
+              }
               return const SizedBox.shrink();
             },
           )
@@ -648,7 +656,6 @@ class _RideListScreenState extends State<RideListScreen> {
         _buildFilterDock(), 
         Expanded(
           child: StreamBuilder<QuerySnapshot>(
-            // --- SERVER-SIDE LIMITATION ENFORCED ---
             stream: FirebaseFirestore.instance.collection('rides').limit(30).snapshots(),
             builder: (context, snapshot) {
               if (snapshot.hasError) return Center(child: Text("Database Connection Issue: ${snapshot.error}"));
