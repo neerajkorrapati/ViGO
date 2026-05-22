@@ -513,10 +513,20 @@ class _RideListScreenState extends State<RideListScreen> {
         automaticallyImplyLeading: false, 
         title: Padding(
           padding: const EdgeInsets.only(left: 8.0),
-          child: Image.network(
-            "/vigo_full_logo.jpeg", 
-            height: 35, 
-            fit: BoxFit.contain,
+          // --- LOGO ROUTING ACTION REGISTERED ---
+          child: InkWell(
+            onTap: () => setState(() => _currentTabNavigationIndex = 0),
+            borderRadius: BorderRadius.circular(8),
+            splashColor: Colors.indigo.withValues(alpha: 0.1),
+            highlightColor: Colors.transparent,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+              child: Image.network(
+                "/vigo_full_logo.jpeg", 
+                height: 35, 
+                fit: BoxFit.contain,
+              ),
+            ),
           ),
         ),
         actions: [
@@ -638,8 +648,7 @@ class _RideListScreenState extends State<RideListScreen> {
         _buildFilterDock(), 
         Expanded(
           child: StreamBuilder<QuerySnapshot>(
-            // --- SERVER-SIDE LIMITATION INDUCTION ---
-            // Restricting the payload strictly to the top 30 active pools saves thousands of document reads per day campus-wide.
+            // --- SERVER-SIDE LIMITATION ENFORCED ---
             stream: FirebaseFirestore.instance.collection('rides').limit(30).snapshots(),
             builder: (context, snapshot) {
               if (snapshot.hasError) return Center(child: Text("Database Connection Issue: ${snapshot.error}"));
