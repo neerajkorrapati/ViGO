@@ -26,6 +26,24 @@ class FirestoreService {
     });
   }
 
+  // Remove a user from the passengers array. We perform a transaction to
+  // ensure we remove the exact passenger object stored in the array.
+  Future<void> leaveParty(String partyId, String userId) async {
+    final docRef = _db.collection('parties').doc(partyId);
+    await _db.runTransaction((tx) async {
+      final snapshot = await tx.get(docRef);
+      if (!snapshot.exists) throw Exception('Party not found');
+
+      final passengers = List<Map<String, dynamic>>.from(snapshot.get('passengers') ?? []);
+      final passenger = passengers.firstWhere((p) => p['id'] == userId, orElse: () => {});
+      if (passenger.isEmpty) return;
+
+      tx.update(docRef, {
+        'passengers': FieldValue.arrayRemove([passenger])
+      });
+    });
+  }
+
   Future<void> deleteParty(String partyId) async {
     await _db.collection('parties').doc(partyId).delete();
   }
