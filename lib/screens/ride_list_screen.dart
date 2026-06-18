@@ -56,7 +56,6 @@ class _RideListScreenState extends State<RideListScreen> with WidgetsBindingObse
     }
   }
 
-  // --- AUTOMATED HOUSEKEEPER: NOW PURGES EXPIRED RIDES AND DECLINED REQUESTS ---
   Future<void> _cleanUpPastRides() async {
     try {
       final now = Timestamp.now();
@@ -90,7 +89,6 @@ class _RideListScreenState extends State<RideListScreen> with WidgetsBindingObse
     }
   }
 
-  // --- PASSENGER LEAVE RIDE FLUID LOGIC ---
   Future<void> _leaveJoinedRide(String rideId, String requestId) async {
     try {
       final batch = FirebaseFirestore.instance.batch();
@@ -412,7 +410,6 @@ class _RideListScreenState extends State<RideListScreen> with WidgetsBindingObse
                       if (isDone) {
                         onAuthSuccess();
                       } else {
-                        // --- EMAIL-BASED FIELD AUTOFILL INJECTED DURING PROFILE TRANSITION ---
                         if (loggedInUser.email != null && _profilePhoneController.text.isEmpty) {
                           final potentialDigits = RegExp(r'\d{10}').stringMatch(loggedInUser.email!);
                           if (potentialDigits != null) {
@@ -535,34 +532,6 @@ class _RideListScreenState extends State<RideListScreen> with WidgetsBindingObse
           ],
         ),
       ),
-    );
-  }
-
-  Widget _buildFocusResetWrapper(List<Map<String, dynamic>> occupants) {
-    final currentUserId = FirebaseAuth.instance.currentUser?.uid;
-    return ListView.builder(
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      itemCount: occupants.length,
-      itemBuilder: (context, index) {
-        final occ = occupants[index];
-        final bool isMe = occ['userId'] == currentUserId;
-
-        return ListTile(
-          contentPadding: EdgeInsets.zero,
-          leading: CircleAvatar(
-            backgroundColor: (occ['color'] as Color).withValues(alpha: 0.1),
-            child: Icon(occ['role'] == 'Host' ? Icons.star : Icons.person, color: occ['color'], size: 18),
-          ),
-          title: Text(isMe ? "${occ['name']} (You)" : occ['name'], style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
-          subtitle: Text(occ['role'], style: TextStyle(color: occ['role'] == 'Host' ? Colors.indigo : Colors.grey, fontSize: 12)),
-          trailing: isMe ? null : IconButton(
-            icon: const Icon(Icons.chat_bubble_outline, color: Colors.green),
-            tooltip: "Message on WhatsApp",
-            onPressed: () => _directWhatsAppUser(occ['userId'], occ['name']),
-          ),
-        );
-      },
     );
   }
 
@@ -1147,7 +1116,6 @@ class _RideListScreenState extends State<RideListScreen> with WidgetsBindingObse
                 final String vehicle = data['vehicleType'] ?? 'Auto';
                 final String phone = data['driverPhone'] ?? '';
                 
-                // --- INJECTED LEAVE RIDE COMPONENT DIRECTLY ON THE JOINED VIEW SUB CARD ---
                 return Column(
                   children: [
                     _buildPremiumRideCard(ride, vehicle, phone, rideDoc.id, data),
@@ -1231,7 +1199,7 @@ class _RideListScreenState extends State<RideListScreen> with WidgetsBindingObse
           decoration: BoxDecoration(
             color: Colors.white,
             borderRadius: BorderRadius.circular(20),
-            boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 10, offset: const Offset(0, 4))],
+            boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 10, offset: const Offset(0, 4))],
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -1315,16 +1283,24 @@ class _RideListScreenState extends State<RideListScreen> with WidgetsBindingObse
   }
 
   Widget _buildIncomingInvitesSubView(String uid) {
-    // --- UPDATED STREAM QUERY TO ORDER THE NEWEST DATA REQS AT THE TOP ABSOLUTE ---
+    // --- FIRESTORE STRIPPED OF ORDERBY ROUTE TO BPASSDeadlock INDEX REQUIREMENT ---
     return StreamBuilder<QuerySnapshot>(
       stream: FirebaseFirestore.instance
           .collection('requests')
           .where('driverId', isEqualTo: uid)
-          .orderBy('timestamp', descending: true)
           .snapshots(),
       builder: (context, snapshot) {
         if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
-        final reqDocs = snapshot.data!.docs;
+        
+        // --- MEMORY ENGINE ORGANIZES LIST ORDERING FOR RECENT AT THE TOP ---
+        final reqDocs = snapshot.data!.docs.toList();
+        reqDocs.sort((a, b) {
+          final aTime = (a.data() as Map<String, dynamic>)['timestamp'] as Timestamp?;
+          final bTime = (b.data() as Map<String, dynamic>)['timestamp'] as Timestamp?;
+          if (aTime == null || bTime == null) return 0;
+          return bTime.compareTo(aTime); // Descending order
+        });
+
         if (reqDocs.isEmpty) return _buildMiniEmptyState(Icons.mail_outline, "No incoming invites", "When other students ask to join your carpool paths, they will emerge here.");
 
         return ListView.builder(
@@ -1383,16 +1359,24 @@ class _RideListScreenState extends State<RideListScreen> with WidgetsBindingObse
   }
 
   Widget _buildSentRequestsSubView(String uid) {
-    // --- UPDATED STREAM QUERY TO ORDER THE NEWEST DATA REQS AT THE TOP ABSOLUTE ---
+    // --- FIRESTORE STRIPPED OF ORDERBY ROUTE TO BPASSDeadlock INDEX REQUIREMENT ---
     return StreamBuilder<QuerySnapshot>(
       stream: FirebaseFirestore.instance
           .collection('requests')
           .where('passengerId', isEqualTo: uid)
-          .orderBy('timestamp', descending: true)
           .snapshots(),
       builder: (context, snapshot) {
         if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
-        final reqDocs = snapshot.data!.docs;
+        
+        // --- MEMORY ENGINE ORGANIZES LIST ORDERING FOR RECENT AT THE TOP ---
+        final reqDocs = snapshot.data!.docs.toList();
+        reqDocs.sort((a, b) {
+          final aTime = (a.data() as Map<String, dynamic>)['timestamp'] as Timestamp?;
+          final bTime = (b.data() as Map<String, dynamic>)['timestamp'] as Timestamp?;
+          if (aTime == null || bTime == null) return 0;
+          return bTime.compareTo(aTime); // Descending order
+        });
+
         if (reqDocs.isEmpty) return _buildMiniEmptyState(Icons.near_me_outlined, "No requests sent yet", "Tap 'Join Ride' on an active pool offer card to register an application route link.");
 
         return ListView.builder(
@@ -1464,8 +1448,6 @@ class _RideListScreenState extends State<RideListScreen> with WidgetsBindingObse
     final bool isMyOwnRide = currentUser != null && ride.driverId == currentUser.uid;
     
     String hostName = ride.driverName; 
-    
-    // --- EVALUATES THE CHANNELS AND FLAGS TO PROCESS 'GIRLS ONLY' PERMISSIONS ---
     bool isGirlsOnly = rawData['girlsOnly'] ?? false;
 
     final rawTotal = rawData['totalSeats'] ?? rawData['seats'] ?? ride.availableSeats;
@@ -1666,7 +1648,7 @@ class _RideListScreenState extends State<RideListScreen> with WidgetsBindingObse
                                 return ElevatedButton(
                                   onPressed: isClickable ? () => _sendJoinRequest(docId, ride, isGirlsOnly) : null,
                                   style: ElevatedButton.styleFrom(
-                                    backgroundColor: btnColor, disabledBackgroundColor: btnColor.withValues(alpha: 0.8), disabledForegroundColor: Colors.white, foregroundColor: Colors.white, elevation: 0, padding: const EdgeInsets.all(12), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                                    backgroundColor: btnColor, disabledBackgroundColor: btnColor.withOpacity(0.8), disabledForegroundColor: Colors.white, foregroundColor: Colors.white, elevation: 0, padding: const EdgeInsets.all(12), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                                   ),
                                   child: Text(btnText, style: const TextStyle(fontWeight: FontWeight.bold)),
                                 );
