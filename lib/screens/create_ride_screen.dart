@@ -18,6 +18,9 @@ class _CreateRideScreenState extends State<CreateRideScreen> {
   int _availableSeats = 3;
   bool _isLoading = false;
 
+  // --- NEW STATE VARIABLE FOR FEMALE PASSENGER RESTRICTION ---
+  bool _isGirlsOnly = false;
+
   DateTime _selectedDate = DateTime.now();
   TimeOfDay _selectedTime = TimeOfDay.now();
   final _notesController = TextEditingController();
@@ -73,7 +76,7 @@ class _CreateRideScreenState extends State<CreateRideScreen> {
     }
 
     if (_pickupPoint == _destination) {
-      _showWarningSnackBar("Your pickup point and destination point cannot match.(Why would u wanna go to the same place from the same place xD!");
+      _showWarningSnackBar("Your pickup point and destination point cannot match. (Why would u wanna go to the same place from the same place xD!)");
       return;
     }
 
@@ -84,18 +87,29 @@ class _CreateRideScreenState extends State<CreateRideScreen> {
 
     try {
       final userProfileDoc = await FirebaseFirestore.instance.collection('users').doc(user.uid).get();
-      final String verifiedPhoneNumber = userProfileDoc.data()?['phoneNumber'] ?? '';
+      final String verifiedPhoneNumber = userProfileDoc.data()?['phoneNumber'] ?? userProfileDoc.data()?['phone'] ?? '';
+      final String hostGender = userProfileDoc.data()?['gender'] ?? 'Male';
+
+      // Security Check: Restrict male profiles from manipulating payload variables
+      if (_isGirlsOnly && hostGender.toLowerCase() != 'female') {
+        setState(() => _isLoading = false);
+        _showWarningSnackBar("🔒 Only verified female hosts can publish Girls-Only pools.");
+        return;
+      }
 
       await FirebaseFirestore.instance.collection('rides').add({
         'driverName': user.displayName ?? 'VIT Student',
         'driverId': user.uid,
+        'driverGender': hostGender,
         'driverPhone': verifiedPhoneNumber,
         'pickupPoint': _pickupPoint,
         'destination': _destination,
         'totalSeats': _availableSeats,
+        'availableSeats': _availableSeats, // Setting initial empty spots allocation
         'vehicleType': _vehicleType,
         'departureTime': Timestamp.fromDate(departureTimestamp),
         'journeyNotes': _notesController.text.trim(),
+        'girlsOnly': _isGirlsOnly, // <-- SAVES FILTER STATE CAPTURE TO FIRESTORE
         'passengerIds': [],
         'createdAt': FieldValue.serverTimestamp(),
       });
@@ -122,6 +136,8 @@ class _CreateRideScreenState extends State<CreateRideScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final user = FirebaseAuth.instance.currentUser;
+
     return Scaffold(
       backgroundColor: const Color(0xFFF8F9FA),
       appBar: AppBar(
@@ -184,9 +200,8 @@ class _CreateRideScreenState extends State<CreateRideScreen> {
                       ),
                       child: Column(
                         children: [
-                          // FIXED: Swapped 'value' parameters with modern 'initialValue' configurations
                           DropdownButtonFormField<String>(
-                            initialValue: _pickupPoint,
+                            value: _pickupPoint,
                             isExpanded: true,
                             decoration: InputDecoration(
                               labelText: "Pickup Point",
@@ -202,7 +217,7 @@ class _CreateRideScreenState extends State<CreateRideScreen> {
                           ),
                           const SizedBox(height: 20),
                           DropdownButtonFormField<String>(
-                            initialValue: _destination,
+                            value: _destination,
                             isExpanded: true,
                             decoration: InputDecoration(
                               labelText: "Destination Location",
@@ -306,7 +321,50 @@ class _CreateRideScreenState extends State<CreateRideScreen> {
                         ],
                       ),
                     ),
-                    const SizedBox(height: 28),
+                    const SizedBox(height: 24),
+
+                    // --- NEW FEATURE IMPLEMENTATION: DYNAMIC SWITCH LIST TILE INTERFACE ---
+                    FutureBuilder<DocumentSnapshot>(
+                      future: user != null 
+                          ? FirebaseFirestore.instance.collection('users').doc(user.uid).get()
+                          : null,
+                      builder: (context, userSnap) {
+                        String gender = "Male";
+                        if (userSnap.hasData && userSnap.data!.exists) {
+                          gender = (userSnap.data!.data() as Map<String, dynamic>?)?['gender'] ?? 'Male';
+                        }
+
+                        // Display option only if host is verified female student
+                        if (gender.toLowerCase() == 'female') {
+                          return Container(
+                            margin: const EdgeInsets.only(bottom: 4),
+                            decoration: BoxDecoration(
+                              color: Colors.pink.withValues(alpha: 0.02),
+                              borderRadius: BorderRadius.circular(14),
+                              border: Border.all(color: Colors.pink.withValues(alpha: 0.1)),
+                            ),
+                            child: SwitchListTile(
+                              title: const Text(
+                                "Girls Only Pool ♀",
+                                style: TextStyle(fontWeight: FontWeight.bold, color: Colors.black87, fontSize: 14),
+                              ),
+                              subtitle: const Text(
+                                "Restrict this route layout so only female accounts can request a slot partition.",
+                                style: TextStyle(fontSize: 11, color: Colors.black54),
+                              ),
+                              activeColor: Colors.pink,
+                              activeTrackColor: Colors.pink[50],
+                              value: _isGirlsOnly,
+                              onChanged: (bool value) {
+                                setState(() => _isGirlsOnly = value);
+                              },
+                            ),
+                          );
+                        }
+                        return const SizedBox.shrink(); // Hide seamlessly for male profiles
+                      },
+                    ),
+                    const SizedBox(height: 24),
 
                     const Text("Journey Notes (Optional)", style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Colors.black54)),
                     const SizedBox(height: 10),
@@ -332,7 +390,7 @@ class _CreateRideScreenState extends State<CreateRideScreen> {
                       child: ElevatedButton(
                         onPressed: _publishRideToFirebase,
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.indigo,
+                          backgroundColor: _isGirlsOnly ? Colors.pink : Colors.indigo,
                           foregroundColor: Colors.white,
                           elevation: 0,
                           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),

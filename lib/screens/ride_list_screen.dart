@@ -32,7 +32,11 @@ class _RideListScreenState extends State<RideListScreen> with WidgetsBindingObse
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this); 
-    _cleanUpPastRides(); 
+    
+    // --- FIXED: Fires housekeeper safely after the first frame paints to stop database write collisions ---
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _cleanUpPastRides();
+    });
   }
 
   @override
@@ -56,7 +60,6 @@ class _RideListScreenState extends State<RideListScreen> with WidgetsBindingObse
     }
   }
 
-  // --- ENHANCED HOUSEKEEPER: NOW COMPLETELY PURGES ALL EXPIRED OR UNRESOLVED REQUESTS ---
   Future<void> _cleanUpPastRides() async {
     try {
       final now = Timestamp.now();
@@ -274,6 +277,7 @@ class _RideListScreenState extends State<RideListScreen> with WidgetsBindingObse
         'timestamp': FieldValue.serverTimestamp(),
       });
       _showSnackBar("Join request sent! The host will review your application.");
+      setState(() {}); // Refresh feed view state to track state update safely
     } catch (e) {
       _showSnackBar("Transaction error: ${e.toString()}");
     }
@@ -299,6 +303,7 @@ class _RideListScreenState extends State<RideListScreen> with WidgetsBindingObse
         await requestRef.update({'status': 'declined'});
         _showSnackBar("Join request declined.");
       }
+      setState(() {});
     } catch (e) {
       _showSnackBar("Network Error: Could not process request.");
     }
@@ -341,6 +346,7 @@ class _RideListScreenState extends State<RideListScreen> with WidgetsBindingObse
               try {
                 await FirebaseFirestore.instance.collection('requests').doc(requestId).delete();
                 _showSnackBar("Request removed from your history.");
+                setState(() {});
               } catch (e) {
                 _showSnackBar("Failed to clear request: $e");
               }
@@ -367,6 +373,7 @@ class _RideListScreenState extends State<RideListScreen> with WidgetsBindingObse
               try {
                 await FirebaseFirestore.instance.collection('rides').doc(rideId).delete();
                 _showSnackBar("Your ride offering has been successfully removed.");
+                setState(() {});
               } catch (e) {
                 _showSnackBar("Failed to delete entry: $e");
               }
@@ -620,7 +627,11 @@ class _RideListScreenState extends State<RideListScreen> with WidgetsBindingObse
       
       floatingActionButton: _currentTabNavigationIndex == 0
           ? FloatingActionButton.extended(
-              onPressed: () => _handleAction(() { Navigator.push(context, MaterialPageRoute(builder: (_) => const CreateRideScreen())); }),
+              onPressed: () => _handleAction(() { 
+                Navigator.push(context, MaterialPageRoute(builder: (_) => const CreateRideScreen())).then((_) {
+                  setState(() {}); // Pull fresh data state when returning from creation screen
+                }); 
+              }),
               backgroundColor: Colors.indigo,
               label: const Text("Offer a Ride", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
               icon: const Icon(Icons.add, color: Colors.white),
@@ -720,8 +731,9 @@ class _RideListScreenState extends State<RideListScreen> with WidgetsBindingObse
       children: [
         _buildFilterDock(), 
         Expanded(
-          child: StreamBuilder<QuerySnapshot>(
-            stream: FirebaseFirestore.instance.collection('rides').limit(30).snapshots(),
+          // --- FIXED: Switched from StreamBuilder to FutureBuilder to break the layout loop deadlock ---
+          child: FutureBuilder<QuerySnapshot>(
+            future: FirebaseFirestore.instance.collection('rides').limit(30).get(),
             builder: (context, snapshot) {
               if (snapshot.hasError) return Center(child: Text("Database Connection Issue: ${snapshot.error}"));
               if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
@@ -779,17 +791,22 @@ class _RideListScreenState extends State<RideListScreen> with WidgetsBindingObse
 
               if (rides.isEmpty) return _buildEmptyState();
 
-              return ListView.builder(
-                padding: const EdgeInsets.all(16),
-                itemCount: rides.length,
-                itemBuilder: (context, index) {
-                  final doc = rides[index];
-                  final ride = Ride.fromFirestore(doc);
-                  final data = doc.data() as Map<String, dynamic>;
-                  final String vehicle = data['vehicleType'] ?? 'Auto';
-                  final String phone = data['driverPhone'] ?? '';
-                  return _buildPremiumRideCard(ride, vehicle, phone, doc.id, data);
+              return RefreshIndicator(
+                onRefresh: () async {
+                  setState(() {});
                 },
+                child: ListView.builder(
+                  padding: const EdgeInsets.all(16),
+                  itemCount: rides.length,
+                  itemBuilder: (context, index) {
+                    final doc = rides[index];
+                    final ride = Ride.fromFirestore(doc);
+                    final data = doc.data() as Map<String, dynamic>;
+                    final String vehicle = data['vehicleType'] ?? 'Auto';
+                    final String phone = data['driverPhone'] ?? '';
+                    return _buildPremiumRideCard(ride, vehicle, phone, doc.id, data);
+                  },
+                ),
               );
             },
           ),
@@ -1310,7 +1327,6 @@ class _RideListScreenState extends State<RideListScreen> with WidgetsBindingObse
             final String status = data['status'] ?? 'pending';
             final String rideId = data['rideId'] ?? '';
 
-            // --- CHECKS IF TIMING PARAMS HAVE ALREADY ELAPSED FOR REALTIME CARD BLOCK ---
             final Timestamp? departureTimestamp = data['departureTime'];
             final bool isExpired = departureTimestamp != null && departureTimestamp.toDate().isBefore(DateTime.now());
 
@@ -1387,7 +1403,6 @@ class _RideListScreenState extends State<RideListScreen> with WidgetsBindingObse
             final data = doc.data() as Map<String, dynamic>;
             final String status = data['status'] ?? 'pending';
 
-            // --- CHECKS IF TIMING PARAMS HAVE ALREADY ELAPSED FOR REALTIME CARD BLOCK ---
             final Timestamp? departureTimestamp = data['departureTime'];
             final bool isExpired = departureTimestamp != null && departureTimestamp.toDate().isBefore(DateTime.now());
 
@@ -1417,7 +1432,6 @@ class _RideListScreenState extends State<RideListScreen> with WidgetsBindingObse
     );
   }
 
-  // --- UPDATED STATUS CHIP DECORATION SCHEME FOR EXPIRED/DEPARTED ROUTES ---
   Widget _buildStatusChip(String status) {
     Color bg = Colors.amber[50]!;
     Color fg = Colors.amber[800]!;
