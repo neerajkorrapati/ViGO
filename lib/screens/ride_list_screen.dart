@@ -42,23 +42,35 @@ class _RideListScreenState extends State<RideListScreen> {
     super.dispose();
   }
 
-  // --- AUTOMATED BACKGROUND HOUSEKEEPING ROUTINE ---
+  // --- COMPREHENSIVE HOUSEKEEPER: PURGES EXPIRED RIDES AND DECLINED ENTRIES ---
   Future<void> _cleanUpPastRides() async {
     try {
       final now = Timestamp.now();
+      final batch = FirebaseFirestore.instance.batch();
+
+      // 1. Delete Expired Rides
       final expiredSnap = await FirebaseFirestore.instance
           .collection('rides')
           .where('departureTime', isLessThan: now)
           .get();
-
-      if (expiredSnap.docs.isEmpty) return;
-
-      final batch = FirebaseFirestore.instance.batch();
+      
       for (var doc in expiredSnap.docs) {
         batch.delete(doc.reference);
       }
+
+      // 2. Delete Declined requests where the ride date is over
+      final expiredDeclinedRequestsSnap = await FirebaseFirestore.instance
+          .collection('requests')
+          .where('status', isEqualTo: 'declined')
+          .where('departureTime', isLessThan: now)
+          .get();
+
+      for (var doc in expiredDeclinedRequestsSnap.docs) {
+        batch.delete(doc.reference);
+      }
+
       await batch.commit();
-      debugPrint("ViGo Housekeeper: Cleaned up ${expiredSnap.docs.length} expired rides.");
+      debugPrint("ViGo Housekeeper: Cleaned up ${expiredSnap.docs.length} expired rides and ${expiredDeclinedRequestsSnap.docs.length} expired declined requests.");
     } catch (e) {
       debugPrint("ViGo Housekeeper Error: $e");
     }
@@ -1026,7 +1038,6 @@ class _RideListScreenState extends State<RideListScreen> {
               future: FirebaseFirestore.instance.collection('rides').doc(rideId).get(),
               builder: (ctx, rideSnap) {
                 if (rideSnap.connectionState == ConnectionState.waiting) return const Padding(padding: EdgeInsets.all(20), child: Center(child: CircularProgressIndicator()));
-                
                 if (!rideSnap.hasData || !rideSnap.data!.exists) {
                   return Container(
                     margin: const EdgeInsets.only(bottom: 16),
@@ -1206,7 +1217,16 @@ class _RideListScreenState extends State<RideListScreen> {
       stream: FirebaseFirestore.instance.collection('requests').where('driverId', isEqualTo: uid).snapshots(),
       builder: (context, snapshot) {
         if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
-        final reqDocs = snapshot.data!.docs;
+        
+        final reqDocs = snapshot.data!.docs.toList();
+        // --- 1. MEMORY ENGINE FORCES NEWEST TO THE TOP ---
+        reqDocs.sort((a, b) {
+          final aTime = (a.data() as Map<String, dynamic>)['timestamp'] as Timestamp?;
+          final bTime = (b.data() as Map<String, dynamic>)['timestamp'] as Timestamp?;
+          if (aTime == null || bTime == null) return 0;
+          return bTime.compareTo(aTime); 
+        });
+
         if (reqDocs.isEmpty) return _buildMiniEmptyState(Icons.mail_outline, "No incoming invites", "When other students ask to join your carpool paths, they will emerge here.");
 
         return ListView.builder(
@@ -1217,6 +1237,10 @@ class _RideListScreenState extends State<RideListScreen> {
             final data = doc.data() as Map<String, dynamic>;
             final String status = data['status'] ?? 'pending';
             final String rideId = data['rideId'] ?? '';
+
+            // --- 2. DYNAMIC REAL-TIME DEPARTED INTERCEPT ENGINE ---
+            final Timestamp? departureTimestamp = data['departureTime'];
+            final bool isExpired = departureTimestamp != null && departureTimestamp.toDate().isBefore(DateTime.now());
 
             return Container(
               margin: const EdgeInsets.only(bottom: 12),
@@ -1233,7 +1257,7 @@ class _RideListScreenState extends State<RideListScreen> {
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
                           Expanded(child: Text(data['passengerName'] ?? 'VIT Student', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.black87), overflow: TextOverflow.ellipsis)),
-                          _buildStatusChip(status),
+                          _buildStatusChip(isExpired && status == 'pending' ? 'expired' : status),
                           IconButton(icon: const Icon(Icons.delete_outline, size: 20, color: Colors.grey), onPressed: () => _confirmClearRequest(doc.id), tooltip: "Clear from history")
                         ],
                       ),
@@ -1242,7 +1266,7 @@ class _RideListScreenState extends State<RideListScreen> {
                         child: Text("Route: ${data['pickupPoint']} ➔ ${data['destination']}", style: const TextStyle(fontSize: 13, color: Colors.black54)),
                       ),
                       children: [
-                        if (status == 'pending') ...[
+                        if (status == 'pending' && !isExpired) ...[
                           const SizedBox(height: 14),
                           Row(
                             children: [
@@ -1269,7 +1293,16 @@ class _RideListScreenState extends State<RideListScreen> {
       stream: FirebaseFirestore.instance.collection('requests').where('passengerId', isEqualTo: uid).snapshots(),
       builder: (context, snapshot) {
         if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
-        final reqDocs = snapshot.data!.docs;
+        
+        final reqDocs = snapshot.data!.docs.toList();
+        // --- 1. MEMORY ENGINE FORCES NEWEST TO THE TOP ---
+        reqDocs.sort((a, b) {
+          final aTime = (a.data() as Map<String, dynamic>)['timestamp'] as Timestamp?;
+          final bTime = (b.data() as Map<String, dynamic>)['timestamp'] as Timestamp?;
+          if (aTime == null || bTime == null) return 0;
+          return bTime.compareTo(aTime); 
+        });
+
         if (reqDocs.isEmpty) return _buildMiniEmptyState(Icons.near_me_outlined, "No requests sent yet", "Tap 'Join Ride' on an active pool offer card to register an application route link.");
 
         return ListView.builder(
@@ -1279,6 +1312,10 @@ class _RideListScreenState extends State<RideListScreen> {
             final doc = reqDocs[index];
             final data = doc.data() as Map<String, dynamic>;
             final String status = data['status'] ?? 'pending';
+
+            // --- 2. DYNAMIC REAL-TIME DEPARTED INTERCEPT ENGINE ---
+            final Timestamp? departureTimestamp = data['departureTime'];
+            final bool isExpired = departureTimestamp != null && departureTimestamp.toDate().isBefore(DateTime.now());
 
             return Container(
               margin: const EdgeInsets.only(bottom: 12),
@@ -1291,7 +1328,7 @@ class _RideListScreenState extends State<RideListScreen> {
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       Expanded(child: Text("Pool with ${data['driverName'] ?? 'Host'}", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15), overflow: TextOverflow.ellipsis)),
-                      _buildStatusChip(status),
+                      _buildStatusChip(isExpired && status == 'pending' ? 'expired' : status),
                       IconButton(icon: const Icon(Icons.delete_outline, size: 20, color: Colors.grey), onPressed: () => _confirmClearRequest(doc.id), tooltip: "Cancel or clear request")
                     ],
                   ),
@@ -1309,12 +1346,15 @@ class _RideListScreenState extends State<RideListScreen> {
   Widget _buildStatusChip(String status) {
     Color bg = Colors.amber[50]!;
     Color fg = Colors.amber[800]!;
+    String label = status.toUpperCase();
     if (status == 'accepted') { bg = Colors.green[50]!; fg = Colors.green[800]!; } 
     else if (status == 'declined') { bg = Colors.grey[100]!; fg = Colors.grey[600]!; }
+    else if (status == 'expired') { bg = Colors.red[50]!; fg = Colors.red[800]!; label = "RIDE DEPARTED"; } // --- RED TIMEOUT CHIP ---
+    
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(12)),
-      child: Text(status.toUpperCase(), style: TextStyle(color: fg, fontSize: 11, fontWeight: FontWeight.bold)),
+      child: Text(label, style: TextStyle(color: fg, fontSize: 11, fontWeight: FontWeight.bold)),
     );
   }
 
