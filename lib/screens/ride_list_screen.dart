@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:url_launcher/url_launcher.dart'; 
-import 'package:shared_preferences/shared_preferences.dart'; 
+import 'dart:html' as html; // Crucial import for handling browser window reload
 import '../models/ride_model.dart';
 import '../services/auth_service.dart';
 import 'onboarding_screen.dart';
@@ -15,15 +15,15 @@ class RideListScreen extends StatefulWidget {
   State<RideListScreen> createState() => _RideListScreenState();
 }
 
-class _RideListScreenState extends State<RideListScreen> with WidgetsBindingObserver {
+class _RideListScreenState extends State<RideListScreen> {
   final _authService = AuthService();
   final TextEditingController _profilePhoneController = TextEditingController();
   final TextEditingController _locationSearchController = TextEditingController();
   
   // --- Filter State Variables ---
   String _locationSearchQuery = '';
-  String _locationFilterType = 'Departure'; 
-  String _timingSortOrder = 'Earliest'; 
+  String _locationFilterType = 'Departure'; // Options: 'Departure' or 'Destination'
+  String _timingSortOrder = 'Earliest'; // Options: 'Earliest' or 'Latest'
 
   String _selectedVehicleFilter = 'All'; 
   DateTime? _selectedDateFilter; 
@@ -32,104 +32,35 @@ class _RideListScreenState extends State<RideListScreen> with WidgetsBindingObse
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this); 
-    
-    // Runs safely after the first frame paints on full page load/refresh
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _cleanUpPastRides();
-    });
+    _cleanUpPastRides(); 
   }
 
   @override
   void dispose() {
-    WidgetsBinding.instance.removeObserver(this); 
     _profilePhoneController.dispose();
     _locationSearchController.dispose();
     super.dispose();
   }
 
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) {
-      // Re-verify firebase authentication token maps natively
-      FirebaseAuth.instance.currentUser?.reload().then((_) {
-        if (mounted) {
-          setState(() {}); 
-        }
-      }).catchError((e) {
-        debugPrint("iOS Session Sync Issue: $e");
-      });
-    }
-  }
-
-  // --- HOUSEKEEPER: COOLDOWN RESTRICTED TO PAGES REFRESHED OR FIRST OPENED ---
+  // --- AUTOMATED BACKGROUND HOUSEKEEPING ROUTINE ---
   Future<void> _cleanUpPastRides() async {
     try {
-      final SharedPreferences prefs = await SharedPreferences.getInstance();
-      final int nowMillis = DateTime.now().millisecondsSinceEpoch;
-      final int lastCleanup = prefs.getInt('vigo_last_cleanup_timestamp') ?? 0;
-      
-      // Cooldown evaluation: 2 hours = 7,200,000 ms
-      const int twoHoursInMillis = 7200000;
-
-      if (nowMillis - lastCleanup < twoHoursInMillis) {
-        debugPrint("ViGo Housekeeper: Skipped. Cooldown active. Last run was less than 2 hours ago.");
-        return; 
-      }
-
-      final nowTimestamp = Timestamp.now();
-      final batch = FirebaseFirestore.instance.batch();
-      
-      // 1. Query expired active rides
+      final now = Timestamp.now();
       final expiredSnap = await FirebaseFirestore.instance
           .collection('rides')
-          .where('departureTime', isLessThan: nowTimestamp)
+          .where('departureTime', isLessThan: now)
           .get();
 
+      if (expiredSnap.docs.isEmpty) return;
+
+      final batch = FirebaseFirestore.instance.batch();
       for (var doc in expiredSnap.docs) {
         batch.delete(doc.reference);
       }
-      
-      // 2. Query pending or declined requests whose ride dates have elapsed
-      final expiredRequestsSnap = await FirebaseFirestore.instance
-          .collection('requests')
-          .where('departureTime', isLessThan: nowTimestamp)
-          .get();
-
-      for (var doc in expiredRequestsSnap.docs) {
-        batch.delete(doc.reference);
-      }
-
       await batch.commit();
-      
-      // Save current timestamp execution mark into persistent local state mapping
-      await prefs.setInt('vigo_last_cleanup_timestamp', nowMillis);
-      debugPrint("ViGo Housekeeper: Cleaned up expired entries successfully on page entry.");
+      debugPrint("ViGo Housekeeper: Cleaned up ${expiredSnap.docs.length} expired rides.");
     } catch (e) {
       debugPrint("ViGo Housekeeper Error: $e");
-    }
-  }
-
-  Future<void> _leaveJoinedRide(String rideId, String requestId) async {
-    try {
-      final batch = FirebaseFirestore.instance.batch();
-      final requestRef = FirebaseFirestore.instance.collection('requests').doc(requestId);
-      final rideRef = FirebaseFirestore.instance.collection('rides').doc(rideId);
-
-      batch.delete(requestRef);
-
-      final rideSnap = await rideRef.get();
-      if (rideSnap.exists) {
-        final data = rideSnap.data() as Map<String, dynamic>;
-        int currentSeats = (data['availableSeats'] ?? 0) as int;
-        batch.update(rideRef, {'availableSeats': currentSeats + 1});
-      }
-
-      await batch.commit();
-      _showSnackBar("You have successfully left this carpool partition.");
-      setState(() {});
-    } catch (e) {
-      _showSnackBar("Failed to opt out of journey: $e");
     }
   }
 
@@ -175,6 +106,7 @@ class _RideListScreenState extends State<RideListScreen> with WidgetsBindingObse
     return "${dt.hour}:${dt.minute.toString().padLeft(2, '0')}";
   }
 
+  // --- TIME AGO HELPER ---
   String _getTimeAgo(dynamic timestamp) {
     if (timestamp == null) return "Posted recently";
     DateTime dt;
@@ -193,6 +125,7 @@ class _RideListScreenState extends State<RideListScreen> with WidgetsBindingObse
     return "Posted just now";
   }
 
+  // --- WHATSAPP LOGIC FOR MAIN BUTTON (WITH FALLBACK) ---
   Future<void> _launchWhatsApp(String ridePhone, String driverId, String hostName, String pickup, String dest) async {
     String finalPhone = ridePhone;
     if (finalPhone.isEmpty) {
@@ -229,6 +162,7 @@ class _RideListScreenState extends State<RideListScreen> with WidgetsBindingObse
     }
   }
 
+  // --- WHATSAPP LOGIC FOR DIRECT MESSAGE FROM MANIFEST ---
   Future<void> _directWhatsAppUser(String targetUserId, String defaultName) async {
     try {
       final userDoc = await FirebaseFirestore.instance.collection('users').doc(targetUserId).get();
@@ -250,7 +184,7 @@ class _RideListScreenState extends State<RideListScreen> with WidgetsBindingObse
     }
   }
 
-  Future<void> _sendJoinRequest(String rideId, Ride ride, bool isGirlsOnly) async {
+  Future<void> _sendJoinRequest(String rideId, Ride ride) async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return;
     if (user.uid == ride.driverId) {
@@ -273,11 +207,6 @@ class _RideListScreenState extends State<RideListScreen> with WidgetsBindingObse
          }
       } catch(e){
          debugPrint("Could not fetch user gender.");
-      }
-
-      if (isGirlsOnly && passengerGender.toLowerCase() != 'female') {
-        _showSnackBar("🔒 This route is flagged exclusively for female passengers.");
-        return;
       }
 
       await FirebaseFirestore.instance.collection('requests').add({
@@ -428,17 +357,8 @@ class _RideListScreenState extends State<RideListScreen> with WidgetsBindingObse
                       if (!ctx.mounted) return;
                       Navigator.pop(ctx); 
                       if (!mounted) return;
-                      if (isDone) {
-                        onAuthSuccess();
-                      } else {
-                        if (loggedInUser.email != null && _profilePhoneController.text.isEmpty) {
-                          final potentialDigits = RegExp(r'\d{10}').stringMatch(loggedInUser.email!);
-                          if (potentialDigits != null) {
-                            _profilePhoneController.text = potentialDigits;
-                          }
-                        }
-                        Navigator.push(context, MaterialPageRoute(builder: (_) => const OnboardingScreen()));
-                      }
+                      if (isDone) onAuthSuccess(); 
+                      else Navigator.push(context, MaterialPageRoute(builder: (_) => const OnboardingScreen()));
                     }
                   } catch (e) {
                     if (!mounted) return;
@@ -618,13 +538,7 @@ class _RideListScreenState extends State<RideListScreen> with WidgetsBindingObse
                   icon: const Icon(Icons.logout, color: Colors.redAccent),
                   onPressed: () async {
                     await _authService.signOut();
-                    if (mounted) {
-                      Navigator.pushAndRemoveUntil(
-                        context,
-                        MaterialPageRoute(builder: (_) => const RideListScreen()),
-                        (route) => false,
-                      );
-                    }
+                    html.window.location.reload(); // Performs clean state web app hard reload
                   },
                 );
               }
@@ -641,11 +555,7 @@ class _RideListScreenState extends State<RideListScreen> with WidgetsBindingObse
       
       floatingActionButton: _currentTabNavigationIndex == 0
           ? FloatingActionButton.extended(
-              onPressed: () => _handleAction(() { 
-                Navigator.push(context, MaterialPageRoute(builder: (_) => const CreateRideScreen())).then((_) {
-                  setState(() {}); 
-                }); 
-              }),
+              onPressed: () => _handleAction(() { Navigator.push(context, MaterialPageRoute(builder: (_) => const CreateRideScreen())); }),
               backgroundColor: Colors.indigo,
               label: const Text("Offer a Ride", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
               icon: const Icon(Icons.add, color: Colors.white),
@@ -745,8 +655,8 @@ class _RideListScreenState extends State<RideListScreen> with WidgetsBindingObse
       children: [
         _buildFilterDock(), 
         Expanded(
-          child: FutureBuilder<QuerySnapshot>(
-            future: FirebaseFirestore.instance.collection('rides').limit(30).get(),
+          child: StreamBuilder<QuerySnapshot>(
+            stream: FirebaseFirestore.instance.collection('rides').limit(30).snapshots(),
             builder: (context, snapshot) {
               if (snapshot.hasError) return Center(child: Text("Database Connection Issue: ${snapshot.error}"));
               if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
@@ -754,6 +664,7 @@ class _RideListScreenState extends State<RideListScreen> with WidgetsBindingObse
               final rawRides = snapshot.data?.docs ?? [];
               final now = DateTime.now();
 
+              // 1. Dynamic Dropdown Location & Upcoming Rides Filters
               var rides = rawRides.where((doc) {
                 final data = doc.data() as Map<String, dynamic>;
                 
@@ -786,10 +697,12 @@ class _RideListScreenState extends State<RideListScreen> with WidgetsBindingObse
                 return true;
               }).toList();
 
+              // 2. Client-Side Sublist Trim to target the primary 15 elements
               if (rides.length > 15) {
                 rides = rides.sublist(0, 15);
               }
 
+              // 3. Sorting Logic
               rides.sort((a, b) {
                 final aData = a.data() as Map<String, dynamic>;
                 final bData = b.data() as Map<String, dynamic>;
@@ -804,23 +717,17 @@ class _RideListScreenState extends State<RideListScreen> with WidgetsBindingObse
 
               if (rides.isEmpty) return _buildEmptyState();
 
-              return RefreshIndicator(
-                onRefresh: () async {
-                  await _cleanUpPastRides();
-                  setState(() {});
+              return ListView.builder(
+                padding: const EdgeInsets.all(16),
+                itemCount: rides.length,
+                itemBuilder: (context, index) {
+                  final doc = rides[index];
+                  final ride = Ride.fromFirestore(doc);
+                  final data = doc.data() as Map<String, dynamic>;
+                  final String vehicle = data['vehicleType'] ?? 'Auto';
+                  final String phone = data['driverPhone'] ?? '';
+                  return _buildPremiumRideCard(ride, vehicle, phone, doc.id, data);
                 },
-                child: ListView.builder(
-                  padding: const EdgeInsets.all(16),
-                  itemCount: rides.length,
-                  itemBuilder: (context, index) {
-                    final doc = rides[index];
-                    final ride = Ride.fromFirestore(doc);
-                    final data = doc.data() as Map<String, dynamic>;
-                    final String vehicle = data['vehicleType'] ?? 'Auto';
-                    final String phone = data['driverPhone'] ?? '';
-                    return _buildPremiumRideCard(ride, vehicle, phone, doc.id, data);
-                  },
-                ),
               );
             },
           ),
@@ -851,6 +758,7 @@ class _RideListScreenState extends State<RideListScreen> with WidgetsBindingObse
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
       child: Column(
         children: [
+          // --- ROW 1: PREMIUM SEARCH BAR & SCOPE TOGGLE ---
           Row(
             children: [
               Expanded(
@@ -911,6 +819,7 @@ class _RideListScreenState extends State<RideListScreen> with WidgetsBindingObse
           ),
           const SizedBox(height: 12),
           
+          // --- ROW 2: ALIGNED FILTER CHIPS (LEFT) & TIME DROPDOWN (PINNED ABSOLUTE RIGHT) ---
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
@@ -1099,11 +1008,7 @@ class _RideListScreenState extends State<RideListScreen> with WidgetsBindingObse
 
   Widget _buildActiveJoinedSubView(String uid) {
     return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance
-          .collection('requests')
-          .where('passengerId', isEqualTo: uid)
-          .where('status', isEqualTo: 'accepted')
-          .snapshots(),
+      stream: FirebaseFirestore.instance.collection('requests').where('passengerId', isEqualTo: uid).where('status', isEqualTo: 'accepted').snapshots(),
       builder: (context, snapshot) {
         if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
         final reqDocs = snapshot.data!.docs;
@@ -1114,8 +1019,7 @@ class _RideListScreenState extends State<RideListScreen> with WidgetsBindingObse
           padding: const EdgeInsets.all(16),
           itemCount: reqDocs.length,
           itemBuilder: (context, index) {
-            final reqDoc = reqDocs[index];
-            final reqData = reqDoc.data() as Map<String, dynamic>;
+            final reqData = reqDocs[index].data() as Map<String, dynamic>;
             final String rideId = reqData['rideId'];
 
             return FutureBuilder<DocumentSnapshot>(
@@ -1135,7 +1039,7 @@ class _RideListScreenState extends State<RideListScreen> with WidgetsBindingObse
                         const SizedBox(height: 8),
                         Text("The host (${reqData['driverName']}) has deleted this route.", style: const TextStyle(color: Colors.black87)),
                         const SizedBox(height: 12),
-                        OutlinedButton(onPressed: () => FirebaseFirestore.instance.collection('requests').doc(reqDoc.id).delete(), style: OutlinedButton.styleFrom(foregroundColor: Colors.redAccent), child: const Text("Clear Warning"))
+                        OutlinedButton(onPressed: () => FirebaseFirestore.instance.collection('requests').doc(reqDocs[index].id).delete(), style: OutlinedButton.styleFrom(foregroundColor: Colors.redAccent), child: const Text("Clear Warning"))
                       ],
                     ),
                   );
@@ -1147,23 +1051,7 @@ class _RideListScreenState extends State<RideListScreen> with WidgetsBindingObse
                 final String vehicle = data['vehicleType'] ?? 'Auto';
                 final String phone = data['driverPhone'] ?? '';
                 
-                return Column(
-                  children: [
-                    _buildPremiumRideCard(ride, vehicle, phone, rideDoc.id, data),
-                    Padding(
-                      padding: const EdgeInsets.only(top: 4, bottom: 16),
-                      child: Align(
-                        alignment: Alignment.centerRight,
-                        child: TextButton.icon(
-                          style: TextButton.styleFrom(foregroundColor: Colors.redAccent),
-                          icon: const Icon(Icons.exit_to_app, size: 16),
-                          label: const Text("Leave Ride Offer", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
-                          onPressed: () => _leaveJoinedRide(rideDoc.id, reqDoc.id),
-                        ),
-                      ),
-                    )
-                  ],
-                );
+                return _buildPremiumRideCard(ride, vehicle, phone, rideDoc.id, data);
               },
             );
           },
@@ -1315,21 +1203,10 @@ class _RideListScreenState extends State<RideListScreen> with WidgetsBindingObse
 
   Widget _buildIncomingInvitesSubView(String uid) {
     return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance
-          .collection('requests')
-          .where('driverId', isEqualTo: uid)
-          .snapshots(),
+      stream: FirebaseFirestore.instance.collection('requests').where('driverId', isEqualTo: uid).snapshots(),
       builder: (context, snapshot) {
         if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
-        
-        final reqDocs = snapshot.data!.docs.toList();
-        reqDocs.sort((a, b) {
-          final aTime = (a.data() as Map<String, dynamic>)['timestamp'] as Timestamp?;
-          final bTime = (b.data() as Map<String, dynamic>)['timestamp'] as Timestamp?;
-          if (aTime == null || bTime == null) return 0;
-          return bTime.compareTo(aTime); 
-        });
-
+        final reqDocs = snapshot.data!.docs;
         if (reqDocs.isEmpty) return _buildMiniEmptyState(Icons.mail_outline, "No incoming invites", "When other students ask to join your carpool paths, they will emerge here.");
 
         return ListView.builder(
@@ -1340,9 +1217,6 @@ class _RideListScreenState extends State<RideListScreen> with WidgetsBindingObse
             final data = doc.data() as Map<String, dynamic>;
             final String status = data['status'] ?? 'pending';
             final String rideId = data['rideId'] ?? '';
-
-            final Timestamp? departureTimestamp = data['departureTime'];
-            final bool isExpired = departureTimestamp != null && departureTimestamp.toDate().isBefore(DateTime.now());
 
             return Container(
               margin: const EdgeInsets.only(bottom: 12),
@@ -1359,7 +1233,7 @@ class _RideListScreenState extends State<RideListScreen> with WidgetsBindingObse
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
                           Expanded(child: Text(data['passengerName'] ?? 'VIT Student', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.black87), overflow: TextOverflow.ellipsis)),
-                          _buildStatusChip(isExpired ? 'expired' : status),
+                          _buildStatusChip(status),
                           IconButton(icon: const Icon(Icons.delete_outline, size: 20, color: Colors.grey), onPressed: () => _confirmClearRequest(doc.id), tooltip: "Clear from history")
                         ],
                       ),
@@ -1368,7 +1242,7 @@ class _RideListScreenState extends State<RideListScreen> with WidgetsBindingObse
                         child: Text("Route: ${data['pickupPoint']} ➔ ${data['destination']}", style: const TextStyle(fontSize: 13, color: Colors.black54)),
                       ),
                       children: [
-                        if (status == 'pending' && !isExpired) ...[
+                        if (status == 'pending') ...[
                           const SizedBox(height: 14),
                           Row(
                             children: [
@@ -1392,21 +1266,10 @@ class _RideListScreenState extends State<RideListScreen> with WidgetsBindingObse
 
   Widget _buildSentRequestsSubView(String uid) {
     return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance
-          .collection('requests')
-          .where('passengerId', isEqualTo: uid)
-          .snapshots(),
+      stream: FirebaseFirestore.instance.collection('requests').where('passengerId', isEqualTo: uid).snapshots(),
       builder: (context, snapshot) {
         if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
-        
-        final reqDocs = snapshot.data!.docs.toList();
-        reqDocs.sort((a, b) {
-          final aTime = (a.data() as Map<String, dynamic>)['timestamp'] as Timestamp?;
-          final bTime = (b.data() as Map<String, dynamic>)['timestamp'] as Timestamp?;
-          if (aTime == null || bTime == null) return 0;
-          return bTime.compareTo(aTime); 
-        });
-
+        final reqDocs = snapshot.data!.docs;
         if (reqDocs.isEmpty) return _buildMiniEmptyState(Icons.near_me_outlined, "No requests sent yet", "Tap 'Join Ride' on an active pool offer card to register an application route link.");
 
         return ListView.builder(
@@ -1416,9 +1279,6 @@ class _RideListScreenState extends State<RideListScreen> with WidgetsBindingObse
             final doc = reqDocs[index];
             final data = doc.data() as Map<String, dynamic>;
             final String status = data['status'] ?? 'pending';
-
-            final Timestamp? departureTimestamp = data['departureTime'];
-            final bool isExpired = departureTimestamp != null && departureTimestamp.toDate().isBefore(DateTime.now());
 
             return Container(
               margin: const EdgeInsets.only(bottom: 12),
@@ -1431,7 +1291,7 @@ class _RideListScreenState extends State<RideListScreen> with WidgetsBindingObse
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       Expanded(child: Text("Pool with ${data['driverName'] ?? 'Host'}", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15), overflow: TextOverflow.ellipsis)),
-                      _buildStatusChip(isExpired ? 'expired' : status),
+                      _buildStatusChip(status),
                       IconButton(icon: const Icon(Icons.delete_outline, size: 20, color: Colors.grey), onPressed: () => _confirmClearRequest(doc.id), tooltip: "Cancel or clear request")
                     ],
                   ),
@@ -1449,24 +1309,12 @@ class _RideListScreenState extends State<RideListScreen> with WidgetsBindingObse
   Widget _buildStatusChip(String status) {
     Color bg = Colors.amber[50]!;
     Color fg = Colors.amber[800]!;
-    String label = status.toUpperCase();
-
-    if (status == 'accepted') { 
-      bg = Colors.green[50]!; 
-      fg = Colors.green[800]!; 
-    } else if (status == 'declined') { 
-      bg = Colors.grey[100]!; 
-      fg = Colors.grey[600]!; 
-    } else if (status == 'expired') {
-      bg = Colors.red[50]!;
-      fg = Colors.red[800]!;
-      label = "RIDE DEPARTED";
-    }
-
+    if (status == 'accepted') { bg = Colors.green[50]!; fg = Colors.green[800]!; } 
+    else if (status == 'declined') { bg = Colors.grey[100]!; fg = Colors.grey[600]!; }
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(12)),
-      child: Text(label, style: TextStyle(color: fg, fontSize: 11, fontWeight: FontWeight.bold)),
+      child: Text(status.toUpperCase(), style: TextStyle(color: fg, fontSize: 11, fontWeight: FontWeight.bold)),
     );
   }
 
@@ -1493,7 +1341,6 @@ class _RideListScreenState extends State<RideListScreen> with WidgetsBindingObse
     final bool isMyOwnRide = currentUser != null && ride.driverId == currentUser.uid;
     
     String hostName = ride.driverName; 
-    bool isGirlsOnly = rawData['girlsOnly'] ?? false;
 
     final rawTotal = rawData['totalSeats'] ?? rawData['seats'] ?? ride.availableSeats;
     int totalCapacity = rawTotal is num ? rawTotal.toInt() : (int.tryParse(rawTotal.toString()) ?? 4);
@@ -1522,27 +1369,15 @@ class _RideListScreenState extends State<RideListScreen> with WidgetsBindingObse
               Row(
                 children: [
                   CircleAvatar(
-                    backgroundColor: isGirlsOnly ? Colors.pink[50] : Colors.indigo[50],
-                    child: Text(hostName.substring(0, 1).toUpperCase(), style: TextStyle(color: isGirlsOnly ? Colors.pink : Colors.indigo, fontWeight: FontWeight.bold)),
+                    backgroundColor: Colors.indigo[50],
+                    child: Text(hostName.substring(0, 1).toUpperCase(), style: const TextStyle(color: Colors.indigo, fontWeight: FontWeight.bold)),
                   ),
                   const SizedBox(width: 12),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Row(
-                          children: [
-                            Text(hostName, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
-                            if (isGirlsOnly) ...[
-                              const SizedBox(width: 6),
-                              Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                decoration: BoxDecoration(color: Colors.pink[50], borderRadius: BorderRadius.circular(6)),
-                                child: Text("GIRLS ONLY ♀", style: TextStyle(color: Colors.pink[400], fontSize: 9, fontWeight: FontWeight.bold)),
-                              )
-                            ]
-                          ],
-                        ),
+                        Text(hostName, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
                         Row(
                           children: [
                             const Text("Verified VIT Student", style: TextStyle(color: Colors.green, fontSize: 11, fontWeight: FontWeight.w500)),
@@ -1653,7 +1488,7 @@ class _RideListScreenState extends State<RideListScreen> with WidgetsBindingObse
                   Expanded(
                     child: currentUser == null 
                     ? ElevatedButton(
-                        onPressed: () => _showLogin(() => _sendJoinRequest(docId, ride, isGirlsOnly)),
+                        onPressed: () => _showLogin(() => _sendJoinRequest(docId, ride)),
                         style: ElevatedButton.styleFrom(backgroundColor: Colors.indigo, foregroundColor: Colors.white, elevation: 0, padding: const EdgeInsets.all(12), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
                         child: const Text("Join Ride", style: TextStyle(fontWeight: FontWeight.bold)),
                       )
@@ -1676,28 +1511,12 @@ class _RideListScreenState extends State<RideListScreen> with WidgetsBindingObse
                               else if (status == 'pending') { btnText = "Requested..."; btnColor = Colors.orange; isClickable = false; }
                             }
                             if (currentAvailable <= 0 && isClickable) { btnText = "Pool Full"; btnColor = Colors.redAccent; isClickable = false; }
-                            
-                            return FutureBuilder<DocumentSnapshot>(
-                              future: FirebaseFirestore.instance.collection('users').doc(currentUser.uid).get(),
-                              builder: (context, userDocSnap) {
-                                if (userDocSnap.hasData && userDocSnap.data!.exists && isGirlsOnly && isClickable) {
-                                  final gender = (userDocSnap.data!.data() as Map<String, dynamic>?)?['gender'] ?? 'Male';
-                                  if (gender.toString().toLowerCase() != 'female') {
-                                    return ElevatedButton(
-                                      onPressed: null,
-                                      style: ElevatedButton.styleFrom(backgroundColor: Colors.pink[50], disabledBackgroundColor: Colors.pink[50], disabledForegroundColor: Colors.pink[300], elevation: 0, padding: const EdgeInsets.all(12), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
-                                      child: const Text("Girls Only Pool 🔒", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
-                                    );
-                                  }
-                                }
-                                return ElevatedButton(
-                                  onPressed: isClickable ? () => _sendJoinRequest(docId, ride, isGirlsOnly) : null,
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: btnColor, disabledBackgroundColor: btnColor.withOpacity(0.8), disabledForegroundColor: Colors.white, foregroundColor: Colors.white, elevation: 0, padding: const EdgeInsets.all(12), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                                  ),
-                                  child: Text(btnText, style: const TextStyle(fontWeight: FontWeight.bold)),
-                                );
-                              }
+                            return ElevatedButton(
+                              onPressed: isClickable ? () => _sendJoinRequest(docId, ride) : null,
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: btnColor, disabledBackgroundColor: btnColor.withOpacity(0.8), disabledForegroundColor: Colors.white, foregroundColor: Colors.white, elevation: 0, padding: const EdgeInsets.all(12), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                              ),
+                              child: Text(btnText, style: const TextStyle(fontWeight: FontWeight.bold)),
                             );
                           },
                       ),
