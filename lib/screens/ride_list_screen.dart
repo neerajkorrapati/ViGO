@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:url_launcher/url_launcher.dart'; 
+import 'package:shared_preferences/shared_preferences.dart'; 
 import '../models/ride_model.dart';
 import '../services/auth_service.dart';
 import 'onboarding_screen.dart';
@@ -33,7 +34,7 @@ class _RideListScreenState extends State<RideListScreen> with WidgetsBindingObse
     super.initState();
     WidgetsBinding.instance.addObserver(this); 
     
-    // --- FIXED: Fires housekeeper safely after the first frame paints to stop database write collisions ---
+    // Runs safely after the first frame paints on full page load/refresh
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _cleanUpPastRides();
     });
@@ -50,6 +51,7 @@ class _RideListScreenState extends State<RideListScreen> with WidgetsBindingObse
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
+      // Re-verify firebase authentication token maps natively
       FirebaseAuth.instance.currentUser?.reload().then((_) {
         if (mounted) {
           setState(() {}); 
@@ -60,25 +62,38 @@ class _RideListScreenState extends State<RideListScreen> with WidgetsBindingObse
     }
   }
 
+  // --- HOUSEKEEPER: COOLDOWN RESTRICTED TO PAGES REFRESHED OR FIRST OPENED ---
   Future<void> _cleanUpPastRides() async {
     try {
-      final now = Timestamp.now();
+      final SharedPreferences prefs = await SharedPreferences.getInstance();
+      final int nowMillis = DateTime.now().millisecondsSinceEpoch;
+      final int lastCleanup = prefs.getInt('vigo_last_cleanup_timestamp') ?? 0;
+      
+      // Cooldown evaluation: 2 hours = 7,200,000 ms
+      const int twoHoursInMillis = 7200000;
+
+      if (nowMillis - lastCleanup < twoHoursInMillis) {
+        debugPrint("ViGo Housekeeper: Skipped. Cooldown active. Last run was less than 2 hours ago.");
+        return; 
+      }
+
+      final nowTimestamp = Timestamp.now();
       final batch = FirebaseFirestore.instance.batch();
       
-      // 1. Clean up expired active rides
+      // 1. Query expired active rides
       final expiredSnap = await FirebaseFirestore.instance
           .collection('rides')
-          .where('departureTime', isLessThan: now)
+          .where('departureTime', isLessThan: nowTimestamp)
           .get();
 
       for (var doc in expiredSnap.docs) {
         batch.delete(doc.reference);
       }
       
-      // 2. Clean up ALL pending or declined requests whose ride dates have elapsed
+      // 2. Query pending or declined requests whose ride dates have elapsed
       final expiredRequestsSnap = await FirebaseFirestore.instance
           .collection('requests')
-          .where('departureTime', isLessThan: now)
+          .where('departureTime', isLessThan: nowTimestamp)
           .get();
 
       for (var doc in expiredRequestsSnap.docs) {
@@ -86,7 +101,10 @@ class _RideListScreenState extends State<RideListScreen> with WidgetsBindingObse
       }
 
       await batch.commit();
-      debugPrint("ViGo Housekeeper: Purged ${expiredSnap.docs.length} dead rides and ${expiredRequestsSnap.docs.length} expired requests.");
+      
+      // Save current timestamp execution mark into persistent local state mapping
+      await prefs.setInt('vigo_last_cleanup_timestamp', nowMillis);
+      debugPrint("ViGo Housekeeper: Cleaned up expired entries successfully on page entry.");
     } catch (e) {
       debugPrint("ViGo Housekeeper Error: $e");
     }
@@ -277,7 +295,6 @@ class _RideListScreenState extends State<RideListScreen> with WidgetsBindingObse
         'timestamp': FieldValue.serverTimestamp(),
       });
       _showSnackBar("Join request sent! The host will review your application.");
-      setState(() {}); // Refresh feed view state to track state update safely
     } catch (e) {
       _showSnackBar("Transaction error: ${e.toString()}");
     }
@@ -303,7 +320,6 @@ class _RideListScreenState extends State<RideListScreen> with WidgetsBindingObse
         await requestRef.update({'status': 'declined'});
         _showSnackBar("Join request declined.");
       }
-      setState(() {});
     } catch (e) {
       _showSnackBar("Network Error: Could not process request.");
     }
@@ -346,7 +362,6 @@ class _RideListScreenState extends State<RideListScreen> with WidgetsBindingObse
               try {
                 await FirebaseFirestore.instance.collection('requests').doc(requestId).delete();
                 _showSnackBar("Request removed from your history.");
-                setState(() {});
               } catch (e) {
                 _showSnackBar("Failed to clear request: $e");
               }
@@ -373,7 +388,6 @@ class _RideListScreenState extends State<RideListScreen> with WidgetsBindingObse
               try {
                 await FirebaseFirestore.instance.collection('rides').doc(rideId).delete();
                 _showSnackBar("Your ride offering has been successfully removed.");
-                setState(() {});
               } catch (e) {
                 _showSnackBar("Failed to delete entry: $e");
               }
@@ -629,7 +643,7 @@ class _RideListScreenState extends State<RideListScreen> with WidgetsBindingObse
           ? FloatingActionButton.extended(
               onPressed: () => _handleAction(() { 
                 Navigator.push(context, MaterialPageRoute(builder: (_) => const CreateRideScreen())).then((_) {
-                  setState(() {}); // Pull fresh data state when returning from creation screen
+                  setState(() {}); 
                 }); 
               }),
               backgroundColor: Colors.indigo,
@@ -731,7 +745,6 @@ class _RideListScreenState extends State<RideListScreen> with WidgetsBindingObse
       children: [
         _buildFilterDock(), 
         Expanded(
-          // --- FIXED: Switched from StreamBuilder to FutureBuilder to break the layout loop deadlock ---
           child: FutureBuilder<QuerySnapshot>(
             future: FirebaseFirestore.instance.collection('rides').limit(30).get(),
             builder: (context, snapshot) {
@@ -793,6 +806,7 @@ class _RideListScreenState extends State<RideListScreen> with WidgetsBindingObse
 
               return RefreshIndicator(
                 onRefresh: () async {
+                  await _cleanUpPastRides();
                   setState(() {});
                 },
                 child: ListView.builder(
