@@ -4,6 +4,7 @@ import 'dart:async';
 import '../models/party_model.dart';
 import '../models/user_model.dart';
 import '../services/firestore_service.dart';
+import '../services/notification_service.dart';
 import '../services/auth_service.dart';
 
 class PartyCard extends StatefulWidget {
@@ -20,6 +21,7 @@ class _PartyCardState extends State<PartyCard> {
   late Timer _timer;
   Duration _timeLeft = Duration.zero;
   bool _isJoining = false;
+  bool _isLeaving = false;
 
   @override
   void initState() {
@@ -70,6 +72,53 @@ class _PartyCardState extends State<PartyCard> {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
     } finally {
       if (mounted) setState(() => _isJoining = false);
+    }
+  }
+
+  Future<void> _handleLeave() async {
+    final String? uid = _auth.currentUserId;
+    if (uid == null) return;
+
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Leave party'),
+        content: const Text('Are you sure you want to leave this party? The host will be notified.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancel')),
+          TextButton(onPressed: () => Navigator.of(ctx).pop(true), child: const Text('Leave')),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    setState(() => _isLeaving = true);
+
+    try {
+      // capture host phone before leaving
+      String hostPhone = '';
+      if (widget.party.passengers.isNotEmpty) hostPhone = widget.party.passengers[0]['phoneNumber'] ?? '';
+
+      final userProfile = await _auth.getUserProfile(uid);
+      final leaverName = userProfile?.name ?? 'A passenger';
+
+      await _firestore.leaveParty(widget.party.id, uid);
+
+      // notify host via cloud function (Twilio)
+      if (hostPhone.isNotEmpty) {
+        await NotificationService.notifyHostLeave(
+          hostPhone: hostPhone,
+          leaverName: leaverName,
+          partyId: widget.party.id,
+        );
+      }
+
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('You left the party.')));
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
+    } finally {
+      if (mounted) setState(() => _isLeaving = false);
     }
   }
 
@@ -132,16 +181,35 @@ class _PartyCardState extends State<PartyCard> {
                       onPressed: () => _firestore.deleteParty(widget.party.id)
                     ),
                     const SizedBox(width: 8),
-                    ElevatedButton(
-                      onPressed: (widget.party.isFull && !isPassenger) || _isJoining ? null : _handleJoin,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: isPassenger ? Colors.green : const Color(0xFF1A53FF),
-                        foregroundColor: Colors.white,
+                    if (isPassenger && !isHost) ...[
+                      IconButton(
+                        tooltip: 'Message on WhatsApp',
+                        icon: const Icon(Icons.chat_bubble_outline, color: Colors.white),
+                        color: Colors.green,
+                        onPressed: _openWhatsApp,
                       ),
-                      child: _isJoining 
-                        ? const SizedBox(width: 15, height: 15, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                        : Text(isPassenger ? "CHAT" : (widget.party.isFull ? "FULL" : "JOIN")),
-                    ),
+                      const SizedBox(width: 8),
+                      OutlinedButton(
+                        onPressed: _isLeaving ? null : _handleLeave,
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: Colors.red,
+                        ),
+                        child: _isLeaving
+                          ? const SizedBox(width: 15, height: 15, child: CircularProgressIndicator(strokeWidth: 2))
+                          : const Text('LEAVE'),
+                      ),
+                    ] else ...[
+                      ElevatedButton(
+                        onPressed: (widget.party.isFull && !isPassenger) || _isJoining ? null : _handleJoin,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: isPassenger ? Colors.green : const Color(0xFF1A53FF),
+                          foregroundColor: Colors.white,
+                        ),
+                        child: _isJoining 
+                          ? const SizedBox(width: 15, height: 15, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                          : Text(isPassenger ? "CHAT" : (widget.party.isFull ? "FULL" : "JOIN")),
+                      ),
+                    ],
                   ],
                 ),
               ],

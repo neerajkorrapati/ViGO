@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:url_launcher/url_launcher.dart'; 
+import 'dart:html' as html; // Crucial import for handling browser window reload
 import '../models/ride_model.dart';
 import '../services/auth_service.dart';
 import 'onboarding_screen.dart';
@@ -339,7 +340,7 @@ class _RideListScreenState extends State<RideListScreen> {
           children: [
             const Text("Authentication Required", style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
             const SizedBox(height: 12),
-            const Text("Please log in with your verified VIT Google ID to interact with carpool pools.", textAlign: TextAlign.center),
+            const Text("Please log in with your verified VIT Google ID to interact with ViGo.", textAlign: TextAlign.center),
             const SizedBox(height: 32),
             SizedBox(
               width: double.infinity,
@@ -513,17 +514,34 @@ class _RideListScreenState extends State<RideListScreen> {
         automaticallyImplyLeading: false, 
         title: Padding(
           padding: const EdgeInsets.only(left: 8.0),
-          child: Image.network(
-            "/vigo_full_logo.jpeg", 
-            height: 35, 
-            fit: BoxFit.contain,
+          child: InkWell(
+            onTap: () => setState(() => _currentTabNavigationIndex = 0),
+            borderRadius: BorderRadius.circular(8),
+            splashColor: Colors.indigo.withValues(alpha: 0.1),
+            highlightColor: Colors.transparent,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+              child: Image.network(
+                "/vigo_full_logo.jpeg", 
+                height: 35, 
+                fit: BoxFit.contain,
+              ),
+            ),
           ),
         ),
         actions: [
           StreamBuilder<User?>(
             stream: _authService.user,
             builder: (context, snapshot) {
-              if (snapshot.hasData) return IconButton(icon: const Icon(Icons.logout, color: Colors.redAccent), onPressed: () => _authService.signOut());
+              if (snapshot.hasData) {
+                return IconButton(
+                  icon: const Icon(Icons.logout, color: Colors.redAccent),
+                  onPressed: () async {
+                    await _authService.signOut();
+                    html.window.location.reload(); // Performs clean state web app hard reload
+                  },
+                );
+              }
               return const SizedBox.shrink();
             },
           )
@@ -638,7 +656,7 @@ class _RideListScreenState extends State<RideListScreen> {
         _buildFilterDock(), 
         Expanded(
           child: StreamBuilder<QuerySnapshot>(
-            stream: FirebaseFirestore.instance.collection('rides').snapshots(),
+            stream: FirebaseFirestore.instance.collection('rides').limit(30).snapshots(),
             builder: (context, snapshot) {
               if (snapshot.hasError) return Center(child: Text("Database Connection Issue: ${snapshot.error}"));
               if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
@@ -647,7 +665,7 @@ class _RideListScreenState extends State<RideListScreen> {
               final now = DateTime.now();
 
               // 1. Dynamic Dropdown Location & Upcoming Rides Filters
-              final rides = rawRides.where((doc) {
+              var rides = rawRides.where((doc) {
                 final data = doc.data() as Map<String, dynamic>;
                 
                 if (data['departureTime'] != null) {
@@ -679,7 +697,12 @@ class _RideListScreenState extends State<RideListScreen> {
                 return true;
               }).toList();
 
-              // 2. Sorting Logic
+              // 2. Client-Side Sublist Trim to target the primary 15 elements
+              if (rides.length > 15) {
+                rides = rides.sublist(0, 15);
+              }
+
+              // 3. Sorting Logic
               rides.sort((a, b) {
                 final aData = a.data() as Map<String, dynamic>;
                 final bData = b.data() as Map<String, dynamic>;

@@ -6,19 +6,30 @@
   <meta charset="UTF-8">
   <meta content="IE=Edge" name="X-UA-Compatible">
   
-  <title>ViGo</title>
-  <meta name="description" content="Carpooling platform for VIT Vellore students with real-time party allocation and WhatsApp integration, developed to help a real world problem at Vit-Vellore.">
+  <title>ViGo - VIT Carpool & Student Ride Share Platform</title>
+  <meta name="description" content="ViGo is the premier student carpool platform for VIT Vellore. Split auto and cab rides, manage student pools, and share travel costs safely with verified students.">
+  <meta name="keywords" content="vit carpool, carpool vit, vit vellore carpooling, student ride share vit, vigo vit, vigo carpool">
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "WebSite",
+    "name": "ViGo",
+    "alternateName": ["ViGo VIT", "VIT Carpool", "Carpool VIT"],
+    "url": "https://vigovit.web.app/"
+  }
+  </script>
 
   <meta property="og:url" content="https://vigovit.web.app/">
   <meta property="og:type" content="website">
-  <meta property="og:title" content="ViGo">
+  <meta property="og:title" content="ViGo - VIT Vellore Student Carpool Pool">
   <meta property="og:description" content="Carpooling platform for VIT Vellore students with real-time party allocation and WhatsApp integration, developed to help a real world problem at Vit-Vellore.">
   <meta property="og:image" content="https://vigovit.web.app/vigo_full_logo.jpeg">
 
   <meta name="twitter:card" content="summary_large_image">
   <meta property="twitter:domain" content="vigovit.web.app">
   <meta property="twitter:url" content="https://vigovit.web.app/">
-  <meta name="twitter:title" content="ViGo">
+  <meta name="twitter:title" content="ViGo - VIT Student Carpooling Network">
   <meta name="twitter:description" content="Carpooling platform for VIT Vellore students with real-time party allocation and WhatsApp integration, developed to help a real world problem at Vit-Vellore.">
   <meta name="twitter:image" content="https://vigovit.web.app/vigo_full_logo.jpeg">
 
@@ -28,13 +39,42 @@
   <link rel="apple-touch-icon" href="icons/vigo_favicon.png?v=4">
 
   <link rel="icon" type="image/png" href="icons/vigo_favicon.png?v=4"/>
-
   <link rel="manifest" href="manifest.json">
 
   <meta name="google-signin-client_id" content="305617221299-akq1cc9bg76f97859lc2jlrht83p1u52.apps.googleusercontent.com">
   <meta name="google-site-verification" content="7k8S_ar6dCrlQHXqGt_l8Bk65jCsNrrH6lBSq7fw3Rs" />
+
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      background-color: #F8F9FA;
+    }
+    /* Forces mobile engines to pass touchscreen drag values directly to the active canvas instantly */
+    flutter-view {
+      touch-action: pan-x pan-y !important;
+      -webkit-overflow-scrolling: touch !important;
+    }
+  </style>
 </head>
 <body>
+
+  <div id="seo-fallback-content" style="position: absolute; left: -9999px; top: -9999px; width: 1px; height: 1px; overflow: hidden;">
+    <h1>VIT Carpool</h1>
+    <h2>Carpool VIT - Verified Student Ride Sharing Platform</h2>
+    <h3>ViGo Campus Rideshare Network for VIT Vellore</h3>
+    <p>
+      ViGo is an innovative vit carpooling application and campus ride share solution specifically engineered to solve transit challenges faced by students at VIT Vellore. 
+      The platform offers streamlined, real-time carpool party allocation for autos and cabs heading to or from the campus, Katpadi railway station, and nearby airports.
+    </p>
+    <p>
+      If you are looking to carpool at VIT, ViGo enables students to securely connect, share travel costs, split cab bookings, and coordinate auto rides efficiently. 
+      Featuring automated, secure verification and seamless integration via native custom WhatsApp group communication links.
+    </p>
+    <p>Keywords: vit carpool, carpool vit, vit vellore carpooling, student ride share vit, vigo vit, vigo carpool, vit cab split, vit auto share</p>
+  </div>
+
   <script src="flutter_bootstrap.js" async></script>
 </body>
 </html>
