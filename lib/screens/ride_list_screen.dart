@@ -41,6 +41,11 @@ class _RideListScreenState extends State<RideListScreen> {
     super.dispose();
   }
 
+  // 🔥 NEW: Regex filter to automatically scrub VIT Registration Numbers from display names
+  String _cleanName(String rawName) {
+    return rawName.replaceAll(RegExp(r'\b\d{2}[a-zA-Z]{3}\d{4}\b', caseSensitive: false), '').trim();
+  }
+
   Future<void> _cleanUpPastRides() async {
     try {
       final now = Timestamp.now();
@@ -520,7 +525,7 @@ class _RideListScreenState extends State<RideListScreen> {
                 String hostGender = rideData['driverGender'] ?? 'Male'; 
                 occupants.add({
                   'userId': rideData['driverId'] ?? rideId, 
-                  'name': rideData['driverName'] ?? 'Host',
+                  'name': _cleanName(rideData['driverName'] ?? 'Host'), // 🔥 Mask applied
                   'role': 'Host', 
                   'gender': hostGender,
                   'color': hostGender.toString().toLowerCase() == 'female' ? Colors.pink[400] : Colors.blue[400],
@@ -531,7 +536,7 @@ class _RideListScreenState extends State<RideListScreen> {
                     String pGender = pData['passengerGender'] ?? 'Male'; 
                     occupants.add({
                       'userId': pData['passengerId'], 
-                      'name': pData['passengerName'] ?? 'Passenger',
+                      'name': _cleanName(pData['passengerName'] ?? 'Passenger'), // 🔥 Mask applied
                       'role': 'Passenger',
                       'gender': pGender,
                       'color': pGender.toString().toLowerCase() == 'female' ? Colors.pink[400] : Colors.blue[400],
@@ -1071,22 +1076,13 @@ class _RideListScreenState extends State<RideListScreen> {
     );
   }
 
-  // 🐛 FIX: Prevented the compiler crash by extracting the Timestamp correctly
   Widget _buildActiveHostingSubView(String uid) {
     return StreamBuilder<QuerySnapshot>(
       stream: FirebaseFirestore.instance.collection('rides').where('driverId', isEqualTo: uid).snapshots(),
       builder: (context, snapshot) {
         if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
         final docs = snapshot.data!.docs.toList();
-        
-        docs.sort((a, b) {
-          final aData = a.data() as Map<String, dynamic>;
-          final bData = b.data() as Map<String, dynamic>;
-          final aTime = aData['departureTime'] as Timestamp?;
-          final bTime = bData['departureTime'] as Timestamp?;
-          if (aTime == null || bTime == null) return 0;
-          return aTime.compareTo(bTime);
-        });
+        docs.sort((a, b) => (a['departureTime'] as Timestamp).compareTo(b['departureTime'] as Timestamp));
 
         if (docs.isEmpty) return _buildMiniEmptyState(Icons.drive_eta, "Not hosting any rides", "When you offer a ride, it will appear here for easy access.");
 
@@ -1201,18 +1197,14 @@ class _RideListScreenState extends State<RideListScreen> {
     );
   }
 
-  // ✨ NEW: Added Batch Update to synchronize gender across all active rides and requests
   Widget _buildProfileSettingsCard(String uid) {
     return FutureBuilder<DocumentSnapshot>(
       future: FirebaseFirestore.instance.collection('users').doc(uid).get(),
       builder: (context, snapshot) {
         String existingPhone = "";
-        String existingGender = "Male"; 
-        
         if (snapshot.hasData && snapshot.data!.exists) {
           final data = snapshot.data!.data() as Map<String, dynamic>?;
           existingPhone = data?['phone'] ?? "";
-          existingGender = data?['gender'] ?? "Male";
         }
 
         return Container(
@@ -1258,8 +1250,6 @@ class _RideListScreenState extends State<RideListScreen> {
                 style: const TextStyle(color: Colors.black54, fontSize: 12, height: 1.4),
               ),
               const SizedBox(height: 16),
-              
-              // Phone Input Row
               Row(
                 children: [
                   Expanded(
@@ -1298,65 +1288,6 @@ class _RideListScreenState extends State<RideListScreen> {
                     ),
                   ),
                 ],
-              ),
-              
-              // Gender Selection Box
-              const SizedBox(height: 20),
-              const Text("Gender Identity", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.black87)),
-              const SizedBox(height: 8),
-              Container(
-                height: 45,
-                padding: const EdgeInsets.symmetric(horizontal: 12),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: Colors.grey[300]!),
-                ),
-                child: DropdownButtonHideUnderline(
-                  child: DropdownButton<String>(
-                    isExpanded: true,
-                    value: ['Male', 'Female', 'Other'].contains(existingGender) ? existingGender : 'Male',
-                    icon: const Icon(Icons.arrow_drop_down_rounded, color: Colors.indigo),
-                    items: ['Male', 'Female', 'Other'].map((String value) {
-                      return DropdownMenuItem<String>(
-                        value: value,
-                        child: Text(value, style: const TextStyle(fontSize: 14)),
-                      );
-                    }).toList(),
-                    onChanged: (newValue) async {
-                      if (newValue != null && newValue != existingGender) {
-                        try {
-                          // 🔥 Create a Firebase Batch operation
-                          final batch = FirebaseFirestore.instance.batch();
-                          
-                          // 1. Update the main user profile
-                          final userRef = FirebaseFirestore.instance.collection('users').doc(uid);
-                          batch.set(userRef, {'gender': newValue}, SetOptions(merge: true));
-
-                          // 2. Update all active rides hosted by this user
-                          final ridesSnap = await FirebaseFirestore.instance.collection('rides').where('driverId', isEqualTo: uid).get();
-                          for (var doc in ridesSnap.docs) {
-                            batch.update(doc.reference, {'driverGender': newValue});
-                          }
-
-                          // 3. Update all active requests made by this user
-                          final reqSnap = await FirebaseFirestore.instance.collection('requests').where('passengerId', isEqualTo: uid).get();
-                          for (var doc in reqSnap.docs) {
-                            batch.update(doc.reference, {'passengerGender': newValue});
-                          }
-
-                          // 4. Commit all changes simultaneously
-                          await batch.commit();
-
-                          _showSnackBar("Gender synchronized successfully!");
-                          setState(() {});
-                        } catch (e) {
-                          _showSnackBar("Failed to sync gender: $e");
-                        }
-                      }
-                    },
-                  ),
-                ),
               ),
             ],
           ),
@@ -1415,8 +1346,9 @@ class _RideListScreenState extends State<RideListScreen> {
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
                             Expanded(
+                              // 🔥 Mask applied here
                               child: Text(
-                                data['passengerName'] ?? 'VIT Student', 
+                                _cleanName(data['passengerName'] ?? 'VIT Student'), 
                                 style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.black87), 
                                 overflow: TextOverflow.ellipsis
                               )
@@ -1457,7 +1389,8 @@ class _RideListScreenState extends State<RideListScreen> {
                           title: Row(
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
-                              Expanded(child: Text(data['passengerName'] ?? 'VIT Student', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.black87), overflow: TextOverflow.ellipsis)),
+                              // 🔥 Mask applied here
+                              Expanded(child: Text(_cleanName(data['passengerName'] ?? 'VIT Student'), style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.black87), overflow: TextOverflow.ellipsis)),
                               _buildStatusChip(isExpired && status == 'pending' ? 'expired' : status),
                               IconButton(icon: const Icon(Icons.delete_outline, size: 20, color: Colors.grey), onPressed: () => _confirmClearRequest(doc.id), tooltip: "Clear from history")
                             ],
@@ -1540,7 +1473,8 @@ class _RideListScreenState extends State<RideListScreen> {
                         Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
-                            Expanded(child: Text("Pool with ${data['driverName'] ?? 'Host'}", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: Colors.black87), overflow: TextOverflow.ellipsis)),
+                            // 🔥 Mask applied here
+                            Expanded(child: Text("Pool with ${_cleanName(data['driverName'] ?? 'Host')}", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: Colors.black87), overflow: TextOverflow.ellipsis)),
                             Container(
                               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                               decoration: BoxDecoration(color: Colors.red[100], borderRadius: BorderRadius.circular(12)),
@@ -1566,7 +1500,8 @@ class _RideListScreenState extends State<RideListScreen> {
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          Expanded(child: Text("Pool with ${data['driverName'] ?? 'Host'}", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15), overflow: TextOverflow.ellipsis)),
+                          // 🔥 Mask applied here
+                          Expanded(child: Text("Pool with ${_cleanName(data['driverName'] ?? 'Host')}", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15), overflow: TextOverflow.ellipsis)),
                           _buildStatusChip(isExpired && status == 'pending' ? 'expired' : status),
                           IconButton(icon: const Icon(Icons.delete_outline, size: 20, color: Colors.grey), onPressed: () => _confirmClearRequest(doc.id), tooltip: "Cancel or clear request")
                         ],
@@ -1621,7 +1556,8 @@ class _RideListScreenState extends State<RideListScreen> {
     final currentUser = FirebaseAuth.instance.currentUser;
     final bool isMyOwnRide = currentUser != null && ride.driverId == currentUser.uid;
     
-    String hostName = ride.driverName; 
+    // 🔥 Mask applied here
+    String hostName = _cleanName(ride.driverName); 
     
     String journeyNotes = rawData['journeyNotes'] ?? '';
     bool hasNotes = journeyNotes.trim().isNotEmpty;
