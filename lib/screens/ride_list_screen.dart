@@ -1082,7 +1082,16 @@ class _RideListScreenState extends State<RideListScreen> {
       builder: (context, snapshot) {
         if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
         final docs = snapshot.data!.docs.toList();
-        docs.sort((a, b) => (a['departureTime'] as Timestamp).compareTo(b['departureTime'] as Timestamp));
+        
+        // 🔥 BUG FIX: Safe Timestamp extraction to prevent compiler crash
+        docs.sort((a, b) {
+          final aMap = a.data() as Map<String, dynamic>;
+          final bMap = b.data() as Map<String, dynamic>;
+          final aTime = aMap['departureTime'] as Timestamp?;
+          final bTime = bMap['departureTime'] as Timestamp?;
+          if (aTime == null || bTime == null) return 0;
+          return aTime.compareTo(bTime);
+        });
 
         if (docs.isEmpty) return _buildMiniEmptyState(Icons.drive_eta, "Not hosting any rides", "When you offer a ride, it will appear here for easy access.");
 
@@ -1197,14 +1206,18 @@ class _RideListScreenState extends State<RideListScreen> {
     );
   }
 
+  // ✨ NEW: Updated Profile Card with Gender Dropdown and Firebase Batch Update
   Widget _buildProfileSettingsCard(String uid) {
     return FutureBuilder<DocumentSnapshot>(
       future: FirebaseFirestore.instance.collection('users').doc(uid).get(),
       builder: (context, snapshot) {
         String existingPhone = "";
+        String existingGender = "Male"; 
+        
         if (snapshot.hasData && snapshot.data!.exists) {
           final data = snapshot.data!.data() as Map<String, dynamic>?;
           existingPhone = data?['phone'] ?? "";
+          existingGender = data?['gender'] ?? "Male";
         }
 
         return Container(
@@ -1250,6 +1263,8 @@ class _RideListScreenState extends State<RideListScreen> {
                 style: const TextStyle(color: Colors.black54, fontSize: 12, height: 1.4),
               ),
               const SizedBox(height: 16),
+              
+              // Phone Input Row
               Row(
                 children: [
                   Expanded(
@@ -1288,6 +1303,65 @@ class _RideListScreenState extends State<RideListScreen> {
                     ),
                   ),
                 ],
+              ),
+              
+              // Gender Selection Box
+              const SizedBox(height: 20),
+              const Text("Gender Identity", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.black87)),
+              const SizedBox(height: 8),
+              Container(
+                height: 45,
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.grey[300]!),
+                ),
+                child: DropdownButtonHideUnderline(
+                  child: DropdownButton<String>(
+                    isExpanded: true,
+                    value: ['Male', 'Female', 'Other'].contains(existingGender) ? existingGender : 'Male',
+                    icon: const Icon(Icons.arrow_drop_down_rounded, color: Colors.indigo),
+                    items: ['Male', 'Female', 'Other'].map((String value) {
+                      return DropdownMenuItem<String>(
+                        value: value,
+                        child: Text(value, style: const TextStyle(fontSize: 14)),
+                      );
+                    }).toList(),
+                    onChanged: (newValue) async {
+                      if (newValue != null && newValue != existingGender) {
+                        try {
+                          // Create a Firebase Batch operation
+                          final batch = FirebaseFirestore.instance.batch();
+                          
+                          // 1. Update the main user profile
+                          final userRef = FirebaseFirestore.instance.collection('users').doc(uid);
+                          batch.set(userRef, {'gender': newValue}, SetOptions(merge: true));
+
+                          // 2. Update all active rides hosted by this user
+                          final ridesSnap = await FirebaseFirestore.instance.collection('rides').where('driverId', isEqualTo: uid).get();
+                          for (var doc in ridesSnap.docs) {
+                            batch.update(doc.reference, {'driverGender': newValue});
+                          }
+
+                          // 3. Update all active requests made by this user
+                          final reqSnap = await FirebaseFirestore.instance.collection('requests').where('passengerId', isEqualTo: uid).get();
+                          for (var doc in reqSnap.docs) {
+                            batch.update(doc.reference, {'passengerGender': newValue});
+                          }
+
+                          // Commit all changes simultaneously
+                          await batch.commit();
+
+                          _showSnackBar("Gender synchronized successfully!");
+                          setState(() {});
+                        } catch (e) {
+                          _showSnackBar("Failed to sync gender: $e");
+                        }
+                      }
+                    },
+                  ),
+                ),
               ),
             ],
           ),
