@@ -1219,7 +1219,7 @@ class _RideListScreenState extends State<RideListScreen> {
         if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
         
         final reqDocs = snapshot.data!.docs.toList();
-        // --- 1. MEMORY ENGINE FORCES NEWEST TO THE TOP ---
+        // --- MEMORY ENGINE FORCES NEWEST TO THE TOP ---
         reqDocs.sort((a, b) {
           final aTime = (a.data() as Map<String, dynamic>)['timestamp'] as Timestamp?;
           final bTime = (b.data() as Map<String, dynamic>)['timestamp'] as Timestamp?;
@@ -1238,49 +1238,105 @@ class _RideListScreenState extends State<RideListScreen> {
             final String status = data['status'] ?? 'pending';
             final String rideId = data['rideId'] ?? '';
 
-            // --- 2. DYNAMIC REAL-TIME DEPARTED INTERCEPT ENGINE ---
+            // --- DYNAMIC REAL-TIME DEPARTED INTERCEPT ENGINE ---
             final Timestamp? departureTimestamp = data['departureTime'];
             final bool isExpired = departureTimestamp != null && departureTimestamp.toDate().isBefore(DateTime.now());
 
-            return Container(
-              margin: const EdgeInsets.only(bottom: 12),
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16)),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Theme(
-                    data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
-                    child: ExpansionTile(
-                      tilePadding: EdgeInsets.zero,
-                      title: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Expanded(child: Text(data['passengerName'] ?? 'VIT Student', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.black87), overflow: TextOverflow.ellipsis)),
-                          _buildStatusChip(isExpired && status == 'pending' ? 'expired' : status),
-                          IconButton(icon: const Icon(Icons.delete_outline, size: 20, color: Colors.grey), onPressed: () => _confirmClearRequest(doc.id), tooltip: "Clear from history")
-                        ],
-                      ),
-                      subtitle: Padding(
-                        padding: const EdgeInsets.only(top: 4.0),
-                        child: Text("Route: ${data['pickupPoint']} ➔ ${data['destination']}", style: const TextStyle(fontSize: 13, color: Colors.black54)),
-                      ),
+            // 🔥 PROPER FIX: LIVE STREAM LISTENER TO THE RIDE DOCUMENT (HOST SIDE)
+            return StreamBuilder<DocumentSnapshot>(
+              stream: FirebaseFirestore.instance.collection('rides').doc(rideId).snapshots(),
+              builder: (ctx, rideSnap) {
+                
+                // Hide briefly while establishing the live connection to avoid UI flicker
+                if (!rideSnap.hasData) return const SizedBox.shrink();
+
+                // 🚨 If the document does not exist, you (the host) deleted the ride!
+                if (!rideSnap.data!.exists) {
+                  return Container(
+                    margin: const EdgeInsets.only(bottom: 12),
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: Colors.red[50], 
+                      borderRadius: BorderRadius.circular(16), 
+                      border: Border.all(color: Colors.red[100]!)
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        if (status == 'pending' && !isExpired) ...[
-                          const SizedBox(height: 14),
-                          Row(
-                            children: [
-                              Expanded(child: OutlinedButton(style: OutlinedButton.styleFrom(foregroundColor: Colors.redAccent, side: const BorderSide(color: Colors.redAccent)), onPressed: () => _processRequestDecision(doc.id, rideId, 'declined'), child: const Text("Decline"))),
-                              const SizedBox(width: 12),
-                              Expanded(child: ElevatedButton(style: ElevatedButton.styleFrom(backgroundColor: Colors.indigo, foregroundColor: Colors.white), onPressed: () => _processRequestDecision(doc.id, rideId, 'accepted'), child: const Text("Accept Request"))),
-                            ],
-                          )
-                        ]
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Expanded(
+                              child: Text(
+                                data['passengerName'] ?? 'VIT Student', 
+                                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.black87), 
+                                overflow: TextOverflow.ellipsis
+                              )
+                            ),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                              decoration: BoxDecoration(color: Colors.red[100], borderRadius: BorderRadius.circular(12)),
+                              child: const Text("RIDE DELETED", style: TextStyle(color: Colors.red, fontSize: 11, fontWeight: FontWeight.bold)),
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.delete_outline, size: 20, color: Colors.grey), 
+                              onPressed: () => _confirmClearRequest(doc.id), 
+                              tooltip: "Clear orphaned invite"
+                            )
+                          ],
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          "You cancelled the route: ${data['pickupPoint']} ➔ ${data['destination']}", 
+                          style: const TextStyle(fontSize: 13, color: Colors.grey)
+                        ),
                       ],
                     ),
+                  );
+                }
+
+                // Normal Request Layout (Ride still exists)
+                return Container(
+                  margin: const EdgeInsets.only(bottom: 12),
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16)),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Theme(
+                        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+                        child: ExpansionTile(
+                          tilePadding: EdgeInsets.zero,
+                          title: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Expanded(child: Text(data['passengerName'] ?? 'VIT Student', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.black87), overflow: TextOverflow.ellipsis)),
+                              _buildStatusChip(isExpired && status == 'pending' ? 'expired' : status),
+                              IconButton(icon: const Icon(Icons.delete_outline, size: 20, color: Colors.grey), onPressed: () => _confirmClearRequest(doc.id), tooltip: "Clear from history")
+                            ],
+                          ),
+                          subtitle: Padding(
+                            padding: const EdgeInsets.only(top: 4.0),
+                            child: Text("Route: ${data['pickupPoint']} ➔ ${data['destination']}", style: const TextStyle(fontSize: 13, color: Colors.black54)),
+                          ),
+                          children: [
+                            if (status == 'pending' && !isExpired) ...[
+                              const SizedBox(height: 14),
+                              Row(
+                                children: [
+                                  Expanded(child: OutlinedButton(style: OutlinedButton.styleFrom(foregroundColor: Colors.redAccent, side: const BorderSide(color: Colors.redAccent)), onPressed: () => _processRequestDecision(doc.id, rideId, 'declined'), child: const Text("Decline"))),
+                                  const SizedBox(width: 12),
+                                  Expanded(child: ElevatedButton(style: ElevatedButton.styleFrom(backgroundColor: Colors.indigo, foregroundColor: Colors.white), onPressed: () => _processRequestDecision(doc.id, rideId, 'accepted'), child: const Text("Accept Request"))),
+                                ],
+                              )
+                            ]
+                          ],
+                        ),
+                      ),
+                    ],
                   ),
-                ],
-              ),
+                );
+              },
             );
           },
         );
@@ -1295,7 +1351,7 @@ class _RideListScreenState extends State<RideListScreen> {
         if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
         
         final reqDocs = snapshot.data!.docs.toList();
-        // --- 1. MEMORY ENGINE FORCES NEWEST TO THE TOP ---
+        // --- MEMORY ENGINE FORCES NEWEST TO THE TOP ---
         reqDocs.sort((a, b) {
           final aTime = (a.data() as Map<String, dynamic>)['timestamp'] as Timestamp?;
           final bTime = (b.data() as Map<String, dynamic>)['timestamp'] as Timestamp?;
@@ -1312,30 +1368,74 @@ class _RideListScreenState extends State<RideListScreen> {
             final doc = reqDocs[index];
             final data = doc.data() as Map<String, dynamic>;
             final String status = data['status'] ?? 'pending';
+            final String rideId = data['rideId'] ?? '';
 
-            // --- 2. DYNAMIC REAL-TIME DEPARTED INTERCEPT ENGINE ---
+            // --- DYNAMIC REAL-TIME DEPARTED INTERCEPT ENGINE ---
             final Timestamp? departureTimestamp = data['departureTime'];
             final bool isExpired = departureTimestamp != null && departureTimestamp.toDate().isBefore(DateTime.now());
 
-            return Container(
-              margin: const EdgeInsets.only(bottom: 12),
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16)),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            // 🔥 PROPER FIX: LIVE STREAM LISTENER TO THE RIDE DOCUMENT
+            return StreamBuilder<DocumentSnapshot>(
+              stream: FirebaseFirestore.instance.collection('rides').doc(rideId).snapshots(),
+              builder: (ctx, rideSnap) {
+                
+                // Hide briefly while establishing the live connection to avoid UI flicker
+                if (!rideSnap.hasData) return const SizedBox.shrink();
+
+                // 🚨 If the document does not exist, the host deleted it!
+                if (!rideSnap.data!.exists) {
+                  return Container(
+                    margin: const EdgeInsets.only(bottom: 12),
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: Colors.red[50], 
+                      borderRadius: BorderRadius.circular(16), 
+                      border: Border.all(color: Colors.red[100]!)
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Expanded(child: Text("Pool with ${data['driverName'] ?? 'Host'}", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: Colors.black87), overflow: TextOverflow.ellipsis)),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                              decoration: BoxDecoration(color: Colors.red[100], borderRadius: BorderRadius.circular(12)),
+                              child: const Text("CANCELLED BY HOST", style: TextStyle(color: Colors.red, fontSize: 11, fontWeight: FontWeight.bold)),
+                            ),
+                            IconButton(icon: const Icon(Icons.delete_outline, size: 20, color: Colors.grey), onPressed: () => _confirmClearRequest(doc.id), tooltip: "Clear cancelled request")
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        Text("Journey: ${data['pickupPoint']} ➔ ${data['destination']}", style: const TextStyle(fontSize: 13, color: Colors.grey)),
+                      ],
+                    ),
+                  );
+                }
+
+                // Normal Request Card (Ride still exists)
+                return Container(
+                  margin: const EdgeInsets.only(bottom: 12),
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16)),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Expanded(child: Text("Pool with ${data['driverName'] ?? 'Host'}", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15), overflow: TextOverflow.ellipsis)),
-                      _buildStatusChip(isExpired && status == 'pending' ? 'expired' : status),
-                      IconButton(icon: const Icon(Icons.delete_outline, size: 20, color: Colors.grey), onPressed: () => _confirmClearRequest(doc.id), tooltip: "Cancel or clear request")
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Expanded(child: Text("Pool with ${data['driverName'] ?? 'Host'}", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15), overflow: TextOverflow.ellipsis)),
+                          _buildStatusChip(isExpired && status == 'pending' ? 'expired' : status),
+                          IconButton(icon: const Icon(Icons.delete_outline, size: 20, color: Colors.grey), onPressed: () => _confirmClearRequest(doc.id), tooltip: "Cancel or clear request")
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Text("Journey: ${data['pickupPoint']} ➔ ${data['destination']}", style: const TextStyle(fontSize: 13, color: Colors.grey)),
                     ],
                   ),
-                  const SizedBox(height: 8),
-                  Text("Journey: ${data['pickupPoint']} ➔ ${data['destination']}", style: const TextStyle(fontSize: 13, color: Colors.grey)),
-                ],
-              ),
+                );
+              },
             );
           },
         );
