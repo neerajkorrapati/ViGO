@@ -22,7 +22,6 @@ class _RideListScreenState extends State<RideListScreen> {
   
   String _locationSearchQuery = '';
   String _locationFilterType = 'Departure'; 
-  String _timingSortOrder = 'Earliest'; 
 
   String _selectedVehicleFilter = 'All'; 
   DateTime? _selectedDateFilter; 
@@ -41,7 +40,7 @@ class _RideListScreenState extends State<RideListScreen> {
     super.dispose();
   }
 
-  // 🔥 NEW: Regex filter to automatically scrub VIT Registration Numbers from display names
+  // Regex filter to automatically scrub VIT Registration Numbers from display names
   String _cleanName(String rawName) {
     return rawName.replaceAll(RegExp(r'\b\d{2}[a-zA-Z]{3}\d{4}\b', caseSensitive: false), '').trim();
   }
@@ -312,7 +311,6 @@ class _RideListScreenState extends State<RideListScreen> {
     );
   }
 
-  // --- NEW: DYNAMIC SEAT RE-ALLOCATION LOGIC ---
   Future<void> _confirmLeaveRide(String rideId, String requestId) async {
     showDialog(
       context: context,
@@ -340,7 +338,6 @@ class _RideListScreenState extends State<RideListScreen> {
                   if (rawSeats is num) currentSeats = rawSeats.toInt();
                   else if (rawSeats is String) currentSeats = int.tryParse(rawSeats) ?? 0;
                   
-                  // Restore the seat
                   batch.update(rideRef, {'availableSeats': currentSeats + 1});
                 }
 
@@ -522,10 +519,10 @@ class _RideListScreenState extends State<RideListScreen> {
                 }
 
                 List<Map<String, dynamic>> occupants = [];
-                String hostGender = rideData['driverGender'] ?? 'Male'; 
+                String hostGender = rideData['driverGender'] ?? rideData['gender'] ?? 'Male'; 
                 occupants.add({
                   'userId': rideData['driverId'] ?? rideId, 
-                  'name': _cleanName(rideData['driverName'] ?? 'Host'), // 🔥 Mask applied
+                  'name': _cleanName(rideData['driverName'] ?? 'Host'),
                   'role': 'Host', 
                   'gender': hostGender,
                   'color': hostGender.toString().toLowerCase() == 'female' ? Colors.pink[400] : Colors.blue[400],
@@ -536,7 +533,7 @@ class _RideListScreenState extends State<RideListScreen> {
                     String pGender = pData['passengerGender'] ?? 'Male'; 
                     occupants.add({
                       'userId': pData['passengerId'], 
-                      'name': _cleanName(pData['passengerName'] ?? 'Passenger'), // 🔥 Mask applied
+                      'name': _cleanName(pData['passengerName'] ?? 'Passenger'),
                       'role': 'Passenger',
                       'gender': pGender,
                       'color': pGender.toString().toLowerCase() == 'female' ? Colors.pink[400] : Colors.blue[400],
@@ -801,16 +798,15 @@ class _RideListScreenState extends State<RideListScreen> {
                 rides = rides.sublist(0, 15);
               }
 
+              // 🔥 ALWAYS SORTS BY EARLIEST FIRST
               rides.sort((a, b) {
                 final aData = a.data() as Map<String, dynamic>;
                 final bData = b.data() as Map<String, dynamic>;
-                final Timestamp? aTime = aData['departureTime'];
-                final Timestamp? bTime = bData['departureTime'];
+                final Timestamp? aTime = aData['departureTime'] as Timestamp?;
+                final Timestamp? bTime = bData['departureTime'] as Timestamp?;
                 
                 if (aTime == null || bTime == null) return 0;
-                return _timingSortOrder == 'Earliest' 
-                    ? aTime.compareTo(bTime) 
-                    : bTime.compareTo(aTime);
+                return aTime.compareTo(bTime); 
               });
 
               if (rides.isEmpty) return _buildEmptyState();
@@ -1010,30 +1006,6 @@ class _RideListScreenState extends State<RideListScreen> {
                   ),
                 ),
               ),
-              const SizedBox(width: 10),
-              Container(
-                height: 38,
-                padding: const EdgeInsets.symmetric(horizontal: 12),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: Colors.grey[200]!),
-                ),
-                child: DropdownButtonHideUnderline(
-                  child: DropdownButton<String>(
-                    value: _timingSortOrder,
-                    icon: const Icon(Icons.unfold_more_rounded, color: Colors.black54, size: 16),
-                    dropdownColor: Colors.white,
-                    borderRadius: BorderRadius.circular(12),
-                    style: const TextStyle(color: Colors.black87, fontWeight: FontWeight.w600, fontSize: 12),
-                    items: const [
-                      DropdownMenuItem(value: 'Earliest', child: Text("Earliest First")),
-                      DropdownMenuItem(value: 'Latest', child: Text("Latest First")),
-                    ],
-                    onChanged: (val) => setState(() => _timingSortOrder = val!),
-                  ),
-                ),
-              ),
             ],
           ),
         ],
@@ -1083,7 +1055,7 @@ class _RideListScreenState extends State<RideListScreen> {
         if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
         final docs = snapshot.data!.docs.toList();
         
-        // 🔥 BUG FIX: Safe Timestamp extraction to prevent compiler crash
+        // Safe Timestamp extraction
         docs.sort((a, b) {
           final aMap = a.data() as Map<String, dynamic>;
           final bMap = b.data() as Map<String, dynamic>;
@@ -1206,7 +1178,7 @@ class _RideListScreenState extends State<RideListScreen> {
     );
   }
 
-  // ✨ NEW: Updated Profile Card with Gender Dropdown and Firebase Batch Update
+  // Profile Card WITH Gender Identity editing and Batch Write capabilities
   Widget _buildProfileSettingsCard(String uid) {
     return FutureBuilder<DocumentSnapshot>(
       future: FirebaseFirestore.instance.collection('users').doc(uid).get(),
@@ -1331,7 +1303,6 @@ class _RideListScreenState extends State<RideListScreen> {
                     onChanged: (newValue) async {
                       if (newValue != null && newValue != existingGender) {
                         try {
-                          // Create a Firebase Batch operation
                           final batch = FirebaseFirestore.instance.batch();
                           
                           // 1. Update the main user profile
@@ -1350,7 +1321,6 @@ class _RideListScreenState extends State<RideListScreen> {
                             batch.update(doc.reference, {'passengerGender': newValue});
                           }
 
-                          // Commit all changes simultaneously
                           await batch.commit();
 
                           _showSnackBar("Gender synchronized successfully!");
@@ -1632,6 +1602,11 @@ class _RideListScreenState extends State<RideListScreen> {
     
     // 🔥 Mask applied here
     String hostName = _cleanName(ride.driverName); 
+
+    // --- HOST GENDER LOGIC ---
+    String hostGender = (rawData['driverGender'] ?? rawData['gender'] ?? 'Male').toString().toLowerCase();
+    Color bookmarkColor = hostGender == 'female' ? Colors.pink[400]! : Colors.blue[400]!;
+    String genderTooltip = hostGender == 'female' ? "Hosted by Female" : "Hosted by Male";
     
     String journeyNotes = rawData['journeyNotes'] ?? '';
     bool hasNotes = journeyNotes.trim().isNotEmpty;
@@ -1694,6 +1669,13 @@ class _RideListScreenState extends State<RideListScreen> {
                     ),
                   ),
                   
+                  // --- GENDER BOOKMARK ---
+                  const SizedBox(width: 8),
+                  Tooltip(
+                    message: genderTooltip,
+                    child: Icon(Icons.bookmark, color: bookmarkColor, size: 22),
+                  ),
+
                   if (hasNotes) ...[
                     const SizedBox(width: 8),
                     InkWell(
