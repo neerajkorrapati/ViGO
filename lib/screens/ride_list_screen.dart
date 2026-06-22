@@ -584,7 +584,7 @@ class _RideListScreenState extends State<RideListScreen> {
         return ListTile(
           contentPadding: EdgeInsets.zero,
           leading: CircleAvatar(
-            backgroundColor: (occ['color'] as Color).withValues(alpha: 0.1),
+            backgroundColor: (occ['color'] as Color).withOpacity(0.1),
             child: Icon(occ['role'] == 'Host' ? Icons.star : Icons.person, color: occ['color'], size: 18),
           ),
           title: Text(isMe ? "${occ['name']} (You)" : occ['name'], style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
@@ -603,10 +603,10 @@ class _RideListScreenState extends State<RideListScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFFF8F9FA), 
-appBar: AppBar(
+      appBar: AppBar(
         backgroundColor: Colors.white,
         elevation: 0,
-        scrolledUnderElevation: 0, // 🔥 CRITICAL: Prevents the background color from changing on scroll
+        scrolledUnderElevation: 0, 
         automaticallyImplyLeading: false, 
         title: Padding(
           padding: const EdgeInsets.only(left: 8.0),
@@ -625,7 +625,6 @@ appBar: AppBar(
             ),
           ),
         ),
-        // ... actions array remains exactly the same
         actions: [
           StreamBuilder<User?>(
             stream: _authService.user,
@@ -843,7 +842,7 @@ appBar: AppBar(
         color: Colors.white,
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.04),
+            color: Colors.black.withOpacity(0.04),
             blurRadius: 10,
             offset: const Offset(0, 4),
           ),
@@ -891,7 +890,7 @@ appBar: AppBar(
                 decoration: BoxDecoration(
                   color: Colors.indigo[50],
                   borderRadius: BorderRadius.circular(14),
-                  border: Border.all(color: Colors.indigo.withValues(alpha: 0.1)),
+                  border: Border.all(color: Colors.indigo.withOpacity(0.1)),
                 ),
                 child: DropdownButtonHideUnderline(
                   child: DropdownButton<String>(
@@ -1072,13 +1071,22 @@ appBar: AppBar(
     );
   }
 
+  // 🐛 FIX: Prevented the compiler crash by extracting the Timestamp correctly
   Widget _buildActiveHostingSubView(String uid) {
     return StreamBuilder<QuerySnapshot>(
       stream: FirebaseFirestore.instance.collection('rides').where('driverId', isEqualTo: uid).snapshots(),
       builder: (context, snapshot) {
         if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
         final docs = snapshot.data!.docs.toList();
-        docs.sort((a, b) => (a['departureTime'] as Timestamp).compareTo(b['departureTime'] as Timestamp));
+        
+        docs.sort((a, b) {
+          final aData = a.data() as Map<String, dynamic>;
+          final bData = b.data() as Map<String, dynamic>;
+          final aTime = aData['departureTime'] as Timestamp?;
+          final bTime = bData['departureTime'] as Timestamp?;
+          if (aTime == null || bTime == null) return 0;
+          return aTime.compareTo(bTime);
+        });
 
         if (docs.isEmpty) return _buildMiniEmptyState(Icons.drive_eta, "Not hosting any rides", "When you offer a ride, it will appear here for easy access.");
 
@@ -1193,14 +1201,18 @@ appBar: AppBar(
     );
   }
 
+  // ✨ NEW: Added Batch Update to synchronize gender across all active rides and requests
   Widget _buildProfileSettingsCard(String uid) {
     return FutureBuilder<DocumentSnapshot>(
       future: FirebaseFirestore.instance.collection('users').doc(uid).get(),
       builder: (context, snapshot) {
         String existingPhone = "";
+        String existingGender = "Male"; 
+        
         if (snapshot.hasData && snapshot.data!.exists) {
           final data = snapshot.data!.data() as Map<String, dynamic>?;
           existingPhone = data?['phone'] ?? "";
+          existingGender = data?['gender'] ?? "Male";
         }
 
         return Container(
@@ -1246,6 +1258,8 @@ appBar: AppBar(
                 style: const TextStyle(color: Colors.black54, fontSize: 12, height: 1.4),
               ),
               const SizedBox(height: 16),
+              
+              // Phone Input Row
               Row(
                 children: [
                   Expanded(
@@ -1284,6 +1298,65 @@ appBar: AppBar(
                     ),
                   ),
                 ],
+              ),
+              
+              // Gender Selection Box
+              const SizedBox(height: 20),
+              const Text("Gender Identity", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.black87)),
+              const SizedBox(height: 8),
+              Container(
+                height: 45,
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.grey[300]!),
+                ),
+                child: DropdownButtonHideUnderline(
+                  child: DropdownButton<String>(
+                    isExpanded: true,
+                    value: ['Male', 'Female', 'Other'].contains(existingGender) ? existingGender : 'Male',
+                    icon: const Icon(Icons.arrow_drop_down_rounded, color: Colors.indigo),
+                    items: ['Male', 'Female', 'Other'].map((String value) {
+                      return DropdownMenuItem<String>(
+                        value: value,
+                        child: Text(value, style: const TextStyle(fontSize: 14)),
+                      );
+                    }).toList(),
+                    onChanged: (newValue) async {
+                      if (newValue != null && newValue != existingGender) {
+                        try {
+                          // 🔥 Create a Firebase Batch operation
+                          final batch = FirebaseFirestore.instance.batch();
+                          
+                          // 1. Update the main user profile
+                          final userRef = FirebaseFirestore.instance.collection('users').doc(uid);
+                          batch.set(userRef, {'gender': newValue}, SetOptions(merge: true));
+
+                          // 2. Update all active rides hosted by this user
+                          final ridesSnap = await FirebaseFirestore.instance.collection('rides').where('driverId', isEqualTo: uid).get();
+                          for (var doc in ridesSnap.docs) {
+                            batch.update(doc.reference, {'driverGender': newValue});
+                          }
+
+                          // 3. Update all active requests made by this user
+                          final reqSnap = await FirebaseFirestore.instance.collection('requests').where('passengerId', isEqualTo: uid).get();
+                          for (var doc in reqSnap.docs) {
+                            batch.update(doc.reference, {'passengerGender': newValue});
+                          }
+
+                          // 4. Commit all changes simultaneously
+                          await batch.commit();
+
+                          _showSnackBar("Gender synchronized successfully!");
+                          setState(() {});
+                        } catch (e) {
+                          _showSnackBar("Failed to sync gender: $e");
+                        }
+                      }
+                    },
+                  ),
+                ),
               ),
             ],
           ),
