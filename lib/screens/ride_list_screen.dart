@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:url_launcher/url_launcher.dart'; 
-import 'dart:html' as html; // Crucial import for handling browser window reload
+import 'dart:html' as html; 
 import '../models/ride_model.dart';
 import '../services/auth_service.dart';
 import 'onboarding_screen.dart';
@@ -20,10 +20,9 @@ class _RideListScreenState extends State<RideListScreen> {
   final TextEditingController _profilePhoneController = TextEditingController();
   final TextEditingController _locationSearchController = TextEditingController();
   
-  // --- Filter State Variables ---
   String _locationSearchQuery = '';
-  String _locationFilterType = 'Departure'; // Options: 'Departure' or 'Destination'
-  String _timingSortOrder = 'Earliest'; // Options: 'Earliest' or 'Latest'
+  String _locationFilterType = 'Departure'; 
+  String _timingSortOrder = 'Earliest'; 
 
   String _selectedVehicleFilter = 'All'; 
   DateTime? _selectedDateFilter; 
@@ -42,13 +41,11 @@ class _RideListScreenState extends State<RideListScreen> {
     super.dispose();
   }
 
-  // --- COMPREHENSIVE HOUSEKEEPER: PURGES EXPIRED RIDES AND DECLINED ENTRIES ---
   Future<void> _cleanUpPastRides() async {
     try {
       final now = Timestamp.now();
       final batch = FirebaseFirestore.instance.batch();
 
-      // 1. Delete Expired Rides
       final expiredSnap = await FirebaseFirestore.instance
           .collection('rides')
           .where('departureTime', isLessThan: now)
@@ -58,7 +55,6 @@ class _RideListScreenState extends State<RideListScreen> {
         batch.delete(doc.reference);
       }
 
-      // 2. Delete Declined requests where the ride date is over
       final expiredDeclinedRequestsSnap = await FirebaseFirestore.instance
           .collection('requests')
           .where('status', isEqualTo: 'declined')
@@ -118,7 +114,6 @@ class _RideListScreenState extends State<RideListScreen> {
     return "${dt.hour}:${dt.minute.toString().padLeft(2, '0')}";
   }
 
-  // --- TIME AGO HELPER ---
   String _getTimeAgo(dynamic timestamp) {
     if (timestamp == null) return "Posted recently";
     DateTime dt;
@@ -137,7 +132,6 @@ class _RideListScreenState extends State<RideListScreen> {
     return "Posted just now";
   }
 
-  // --- WHATSAPP LOGIC FOR MAIN BUTTON (WITH FALLBACK) ---
   Future<void> _launchWhatsApp(String ridePhone, String driverId, String hostName, String pickup, String dest) async {
     String finalPhone = ridePhone;
     if (finalPhone.isEmpty) {
@@ -174,7 +168,6 @@ class _RideListScreenState extends State<RideListScreen> {
     }
   }
 
-  // --- WHATSAPP LOGIC FOR DIRECT MESSAGE FROM MANIFEST ---
   Future<void> _directWhatsAppUser(String targetUserId, String defaultName) async {
     try {
       final userDoc = await FirebaseFirestore.instance.collection('users').doc(targetUserId).get();
@@ -385,6 +378,53 @@ class _RideListScreenState extends State<RideListScreen> {
     );
   }
 
+  // --- NEW: PRIVATE JOURNEY NOTES VIEWER ---
+  Future<void> _showNotesDialog(String rideId, Map<String, dynamic> rideData, bool isMyOwnRide) async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      _showLogin(() {});
+      return;
+    }
+
+    // Security lock: Block unaccepted users from reading the notes
+    if (!isMyOwnRide) {
+      final checkSnap = await FirebaseFirestore.instance.collection('requests')
+          .where('rideId', isEqualTo: rideId)
+          .where('passengerId', isEqualTo: user.uid)
+          .where('status', isEqualTo: 'accepted')
+          .get();
+      if (checkSnap.docs.isEmpty) {
+        _showSnackBar("🔒 You must be an accepted passenger to read the host's private journey notes.");
+        return;
+      }
+    }
+
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.speaker_notes, color: Colors.indigo),
+            SizedBox(width: 8),
+            Text("Journey Notes", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+          ],
+        ),
+        content: Text(
+          rideData['journeyNotes'] ?? "No additional notes provided.",
+          style: const TextStyle(fontSize: 14, height: 1.5, color: Colors.black87),
+        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text("Close", style: TextStyle(fontWeight: FontWeight.bold)),
+          )
+        ],
+      ),
+    );
+  }
+
   Future<void> _handleRideTap(String rideId, Map<String, dynamic> rideData, bool isMyOwnRide, int totalCapacity, int emptySeats) async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) {
@@ -550,7 +590,7 @@ class _RideListScreenState extends State<RideListScreen> {
                   icon: const Icon(Icons.logout, color: Colors.redAccent),
                   onPressed: () async {
                     await _authService.signOut();
-                    html.window.location.reload(); // Performs clean state web app hard reload
+                    html.window.location.reload(); 
                   },
                 );
               }
@@ -676,7 +716,6 @@ class _RideListScreenState extends State<RideListScreen> {
               final rawRides = snapshot.data?.docs ?? [];
               final now = DateTime.now();
 
-              // 1. Dynamic Dropdown Location & Upcoming Rides Filters
               var rides = rawRides.where((doc) {
                 final data = doc.data() as Map<String, dynamic>;
                 
@@ -709,12 +748,10 @@ class _RideListScreenState extends State<RideListScreen> {
                 return true;
               }).toList();
 
-              // 2. Client-Side Sublist Trim to target the primary 15 elements
               if (rides.length > 15) {
                 rides = rides.sublist(0, 15);
               }
 
-              // 3. Sorting Logic
               rides.sort((a, b) {
                 final aData = a.data() as Map<String, dynamic>;
                 final bData = b.data() as Map<String, dynamic>;
@@ -770,7 +807,6 @@ class _RideListScreenState extends State<RideListScreen> {
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
       child: Column(
         children: [
-          // --- ROW 1: PREMIUM SEARCH BAR & SCOPE TOGGLE ---
           Row(
             children: [
               Expanded(
@@ -831,7 +867,6 @@ class _RideListScreenState extends State<RideListScreen> {
           ),
           const SizedBox(height: 12),
           
-          // --- ROW 2: ALIGNED FILTER CHIPS (LEFT) & TIME DROPDOWN (PINNED ABSOLUTE RIGHT) ---
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
@@ -1219,7 +1254,6 @@ class _RideListScreenState extends State<RideListScreen> {
         if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
         
         final reqDocs = snapshot.data!.docs.toList();
-        // --- MEMORY ENGINE FORCES NEWEST TO THE TOP ---
         reqDocs.sort((a, b) {
           final aTime = (a.data() as Map<String, dynamic>)['timestamp'] as Timestamp?;
           final bTime = (b.data() as Map<String, dynamic>)['timestamp'] as Timestamp?;
@@ -1238,19 +1272,15 @@ class _RideListScreenState extends State<RideListScreen> {
             final String status = data['status'] ?? 'pending';
             final String rideId = data['rideId'] ?? '';
 
-            // --- DYNAMIC REAL-TIME DEPARTED INTERCEPT ENGINE ---
             final Timestamp? departureTimestamp = data['departureTime'];
             final bool isExpired = departureTimestamp != null && departureTimestamp.toDate().isBefore(DateTime.now());
 
-            // 🔥 PROPER FIX: LIVE STREAM LISTENER TO THE RIDE DOCUMENT (HOST SIDE)
             return StreamBuilder<DocumentSnapshot>(
               stream: FirebaseFirestore.instance.collection('rides').doc(rideId).snapshots(),
               builder: (ctx, rideSnap) {
                 
-                // Hide briefly while establishing the live connection to avoid UI flicker
                 if (!rideSnap.hasData) return const SizedBox.shrink();
 
-                // 🚨 If the document does not exist, you (the host) deleted the ride!
                 if (!rideSnap.data!.exists) {
                   return Container(
                     margin: const EdgeInsets.only(bottom: 12),
@@ -1295,7 +1325,6 @@ class _RideListScreenState extends State<RideListScreen> {
                   );
                 }
 
-                // Normal Request Layout (Ride still exists)
                 return Container(
                   margin: const EdgeInsets.only(bottom: 12),
                   padding: const EdgeInsets.all(16),
@@ -1351,7 +1380,6 @@ class _RideListScreenState extends State<RideListScreen> {
         if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
         
         final reqDocs = snapshot.data!.docs.toList();
-        // --- MEMORY ENGINE FORCES NEWEST TO THE TOP ---
         reqDocs.sort((a, b) {
           final aTime = (a.data() as Map<String, dynamic>)['timestamp'] as Timestamp?;
           final bTime = (b.data() as Map<String, dynamic>)['timestamp'] as Timestamp?;
@@ -1370,19 +1398,15 @@ class _RideListScreenState extends State<RideListScreen> {
             final String status = data['status'] ?? 'pending';
             final String rideId = data['rideId'] ?? '';
 
-            // --- DYNAMIC REAL-TIME DEPARTED INTERCEPT ENGINE ---
             final Timestamp? departureTimestamp = data['departureTime'];
             final bool isExpired = departureTimestamp != null && departureTimestamp.toDate().isBefore(DateTime.now());
 
-            // 🔥 PROPER FIX: LIVE STREAM LISTENER TO THE RIDE DOCUMENT
             return StreamBuilder<DocumentSnapshot>(
               stream: FirebaseFirestore.instance.collection('rides').doc(rideId).snapshots(),
               builder: (ctx, rideSnap) {
                 
-                // Hide briefly while establishing the live connection to avoid UI flicker
                 if (!rideSnap.hasData) return const SizedBox.shrink();
 
-                // 🚨 If the document does not exist, the host deleted it!
                 if (!rideSnap.data!.exists) {
                   return Container(
                     margin: const EdgeInsets.only(bottom: 12),
@@ -1414,7 +1438,6 @@ class _RideListScreenState extends State<RideListScreen> {
                   );
                 }
 
-                // Normal Request Card (Ride still exists)
                 return Container(
                   margin: const EdgeInsets.only(bottom: 12),
                   padding: const EdgeInsets.all(16),
@@ -1449,7 +1472,7 @@ class _RideListScreenState extends State<RideListScreen> {
     String label = status.toUpperCase();
     if (status == 'accepted') { bg = Colors.green[50]!; fg = Colors.green[800]!; } 
     else if (status == 'declined') { bg = Colors.grey[100]!; fg = Colors.grey[600]!; }
-    else if (status == 'expired') { bg = Colors.red[50]!; fg = Colors.red[800]!; label = "RIDE DEPARTED"; } // --- RED TIMEOUT CHIP ---
+    else if (status == 'expired') { bg = Colors.red[50]!; fg = Colors.red[800]!; label = "RIDE DEPARTED"; } 
     
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
@@ -1481,6 +1504,10 @@ class _RideListScreenState extends State<RideListScreen> {
     final bool isMyOwnRide = currentUser != null && ride.driverId == currentUser.uid;
     
     String hostName = ride.driverName; 
+    
+    // Check if the ride has journey notes provided by the host
+    String journeyNotes = rawData['journeyNotes'] ?? '';
+    bool hasNotes = journeyNotes.trim().isNotEmpty;
 
     final rawTotal = rawData['totalSeats'] ?? rawData['seats'] ?? ride.availableSeats;
     int totalCapacity = rawTotal is num ? rawTotal.toInt() : (int.tryParse(rawTotal.toString()) ?? 4);
@@ -1539,6 +1566,21 @@ class _RideListScreenState extends State<RideListScreen> {
                       ],
                     ),
                   ),
+                  
+                  // --- NEW: PRIVATE JOURNEY NOTES ICON BUTTON ---
+                  if (hasNotes) ...[
+                    const SizedBox(width: 8),
+                    InkWell(
+                      onTap: () => _showNotesDialog(docId, rawData, isMyOwnRide),
+                      borderRadius: BorderRadius.circular(20),
+                      child: Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(color: Colors.blue[50], shape: BoxShape.circle),
+                        child: const Icon(Icons.speaker_notes, size: 14, color: Colors.blue),
+                      ),
+                    ),
+                  ],
+
                   if (isMyOwnRide) ...[
                     const SizedBox(width: 8),
                     IconButton(icon: const Icon(Icons.delete_outline, color: Colors.redAccent, size: 22), tooltip: "Cancel this offer", onPressed: () => _confirmDeleteRide(docId))
