@@ -307,6 +307,51 @@ class _RideListScreenState extends State<RideListScreen> {
     );
   }
 
+  // --- NEW: DYNAMIC SEAT RE-ALLOCATION LOGIC ---
+  Future<void> _confirmLeaveRide(String rideId, String requestId) async {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text("Leave Ride?", style: TextStyle(fontWeight: FontWeight.bold)),
+        content: const Text("Are you sure you want to back out of this carpool? Your confirmed seat will be returned to the host and made available to others."),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Stay")),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent, foregroundColor: Colors.white),
+            onPressed: () async {
+              Navigator.pop(ctx);
+              try {
+                final batch = FirebaseFirestore.instance.batch();
+                final requestRef = FirebaseFirestore.instance.collection('requests').doc(requestId);
+                final rideRef = FirebaseFirestore.instance.collection('rides').doc(rideId);
+
+                batch.delete(requestRef);
+
+                final rideSnap = await rideRef.get();
+                if (rideSnap.exists) {
+                  final data = rideSnap.data() as Map<String, dynamic>;
+                  var rawSeats = data['availableSeats'] ?? data['totalSeats'] ?? data['seats'];
+                  int currentSeats = 0;
+                  if (rawSeats is num) currentSeats = rawSeats.toInt();
+                  else if (rawSeats is String) currentSeats = int.tryParse(rawSeats) ?? 0;
+                  
+                  // Restore the seat
+                  batch.update(rideRef, {'availableSeats': currentSeats + 1});
+                }
+
+                await batch.commit();
+                _showSnackBar("You have successfully left the ride. Your seat has been released.");
+              } catch (e) {
+                _showSnackBar("Failed to leave ride: $e");
+              }
+            },
+            child: const Text("Leave Ride"),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _confirmDeleteRide(String rideId) async {
     showDialog(
       context: context,
@@ -378,7 +423,6 @@ class _RideListScreenState extends State<RideListScreen> {
     );
   }
 
-  // --- NEW: PRIVATE JOURNEY NOTES VIEWER ---
   Future<void> _showNotesDialog(String rideId, Map<String, dynamic> rideData, bool isMyOwnRide) async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) {
@@ -386,7 +430,6 @@ class _RideListScreenState extends State<RideListScreen> {
       return;
     }
 
-    // Security lock: Block unaccepted users from reading the notes
     if (!isMyOwnRide) {
       final checkSnap = await FirebaseFirestore.instance.collection('requests')
           .where('rideId', isEqualTo: rideId)
@@ -560,16 +603,17 @@ class _RideListScreenState extends State<RideListScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFFF8F9FA), 
-      appBar: AppBar(
+appBar: AppBar(
         backgroundColor: Colors.white,
         elevation: 0,
+        scrolledUnderElevation: 0, // 🔥 CRITICAL: Prevents the background color from changing on scroll
         automaticallyImplyLeading: false, 
         title: Padding(
           padding: const EdgeInsets.only(left: 8.0),
           child: InkWell(
             onTap: () => setState(() => _currentTabNavigationIndex = 0),
             borderRadius: BorderRadius.circular(8),
-            splashColor: Colors.indigo.withValues(alpha: 0.1),
+            splashColor: Colors.indigo.withOpacity(0.1),
             highlightColor: Colors.transparent,
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
@@ -581,6 +625,7 @@ class _RideListScreenState extends State<RideListScreen> {
             ),
           ),
         ),
+        // ... actions array remains exactly the same
         actions: [
           StreamBuilder<User?>(
             stream: _authService.user,
@@ -1505,7 +1550,6 @@ class _RideListScreenState extends State<RideListScreen> {
     
     String hostName = ride.driverName; 
     
-    // Check if the ride has journey notes provided by the host
     String journeyNotes = rawData['journeyNotes'] ?? '';
     bool hasNotes = journeyNotes.trim().isNotEmpty;
 
@@ -1567,7 +1611,6 @@ class _RideListScreenState extends State<RideListScreen> {
                     ),
                   ),
                   
-                  // --- NEW: PRIVATE JOURNEY NOTES ICON BUTTON ---
                   if (hasNotes) ...[
                     const SizedBox(width: 8),
                     InkWell(
@@ -1685,16 +1728,33 @@ class _RideListScreenState extends State<RideListScreen> {
                           builder: (ctx, snap) {
                             String btnText = "Join Ride";
                             Color btnColor = Colors.indigo;
-                            bool isClickable = true;
+                            VoidCallback? onPressedAction = () => _sendJoinRequest(docId, ride);
+
                             if (snap.hasData && snap.data!.docs.isNotEmpty) {
-                              final reqData = snap.data!.docs.first.data() as Map<String, dynamic>;
+                              final reqDoc = snap.data!.docs.first;
+                              final reqData = reqDoc.data() as Map<String, dynamic>;
                               final status = reqData['status'] ?? 'pending';
-                              if (status == 'accepted') { btnText = "Ride Joined ✓"; btnColor = Colors.green; isClickable = false; } 
-                              else if (status == 'pending') { btnText = "Requested..."; btnColor = Colors.orange; isClickable = false; }
+                              
+                              if (status == 'accepted') { 
+                                btnText = "Leave Ride"; 
+                                btnColor = Colors.redAccent; 
+                                onPressedAction = () => _confirmLeaveRide(docId, reqDoc.id); 
+                              } 
+                              else if (status == 'pending') { 
+                                btnText = "Cancel Request"; 
+                                btnColor = Colors.orange; 
+                                onPressedAction = () => _confirmClearRequest(reqDoc.id); 
+                              }
+                            } else {
+                              if (currentAvailable <= 0) { 
+                                btnText = "Pool Full"; 
+                                btnColor = Colors.redAccent; 
+                                onPressedAction = null; 
+                              }
                             }
-                            if (currentAvailable <= 0 && isClickable) { btnText = "Pool Full"; btnColor = Colors.redAccent; isClickable = false; }
+                            
                             return ElevatedButton(
-                              onPressed: isClickable ? () => _sendJoinRequest(docId, ride) : null,
+                              onPressed: onPressedAction,
                               style: ElevatedButton.styleFrom(
                                 backgroundColor: btnColor, disabledBackgroundColor: btnColor.withOpacity(0.8), disabledForegroundColor: Colors.white, foregroundColor: Colors.white, elevation: 0, padding: const EdgeInsets.all(12), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                               ),
