@@ -30,7 +30,8 @@ class _RideListScreenState extends State<RideListScreen> {
   @override
   void initState() {
     super.initState();
-    _cleanUpPastRides(); 
+    // DISABLE 
+    //_cleanUpPastRides();   : cleaning up the sweeper bot to reduce read operations on firebase servers.
   }
 
   @override
@@ -754,7 +755,7 @@ class _RideListScreenState extends State<RideListScreen> {
         _buildFilterDock(), 
         Expanded(
           child: StreamBuilder<QuerySnapshot>(
-            stream: FirebaseFirestore.instance.collection('rides').limit(30).snapshots(),
+            stream: FirebaseFirestore.instance.collection('rides').limit(15).snapshots(), // changing limit to 15 users from 30, to reduce server read operations load.
             builder: (context, snapshot) {
               if (snapshot.hasError) return Center(child: Text("Database Connection Issue: ${snapshot.error}"));
               if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
@@ -794,20 +795,25 @@ class _RideListScreenState extends State<RideListScreen> {
                 return true;
               }).toList();
 
-              if (rides.length > 15) {
-                rides = rides.sublist(0, 15);
-              }
-
-              // 🔥 ALWAYS SORTS BY EARLIEST FIRST
+              // 🔥 ALWAYS SORTS BY MOST RECENTLY CREATED FIRST (Regardless of filters)
               rides.sort((a, b) {
                 final aData = a.data() as Map<String, dynamic>;
                 final bData = b.data() as Map<String, dynamic>;
-                final Timestamp? aTime = aData['departureTime'] as Timestamp?;
-                final Timestamp? bTime = bData['departureTime'] as Timestamp?;
+                
+                // Uses the document creation time, safely falls back if missing
+                final Timestamp? aTime = aData['timestamp'] as Timestamp? ?? aData['createdAt'] as Timestamp? ?? aData['departureTime'] as Timestamp?;
+                final Timestamp? bTime = bData['timestamp'] as Timestamp? ?? bData['createdAt'] as Timestamp? ?? bData['departureTime'] as Timestamp?;
                 
                 if (aTime == null || bTime == null) return 0;
-                return aTime.compareTo(bTime); 
+                
+                // b.compareTo(a) reverses the order so the newest is at the top
+                return bTime.compareTo(aTime); 
               });
+
+              // 🔥 Truncate AFTER sorting to ensure you get the absolute 15 newest rides
+              if (rides.length > 15) {
+                rides = rides.sublist(0, 15);
+              }
 
               if (rides.isEmpty) return _buildEmptyState();
 
