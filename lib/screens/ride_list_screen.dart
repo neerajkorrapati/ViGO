@@ -1604,9 +1604,9 @@ class _RideListScreenState extends State<RideListScreen> {
     String hostName = _cleanName(ride.driverName); 
 
     // --- HOST GENDER LOGIC ---
-    String hostGender = (rawData['driverGender'] ?? rawData['gender'] ?? 'Male').toString().toLowerCase();
-    Color bookmarkColor = hostGender == 'female' ? Colors.pink[400]! : Colors.blue[400]!;
-    String genderTooltip = hostGender == 'female' ? "Hosted by Female" : "Hosted by Male";
+    //String hostGender = (rawData['driverGender'] ?? rawData['gender'] ?? 'Male').toString().toLowerCase();
+    //Color bookmarkColor = hostGender == 'female' ? Colors.pink[400]! : Colors.blue[400]!;
+   // String genderTooltip = hostGender == 'female' ? "Hosted by Female" : "Hosted by Male";
     
     String journeyNotes = rawData['journeyNotes'] ?? '';
     bool hasNotes = journeyNotes.trim().isNotEmpty;
@@ -1668,13 +1668,13 @@ class _RideListScreenState extends State<RideListScreen> {
                       ],
                     ),
                   ),
-                  
+                  // REMOVING GENDER BOOKMARKS - FOR HOST
                   // --- GENDER BOOKMARK ---
-                  const SizedBox(width: 8),
-                  Tooltip(
-                    message: genderTooltip,
-                    child: Icon(Icons.bookmark, color: bookmarkColor, size: 22),
-                  ),
+                  //const SizedBox(width: 8),
+                  //Tooltip(
+                    //message: genderTooltip,
+                    //child: Icon(Icons.bookmark, color: bookmarkColor, size: 22),
+                  //),
 
                   if (hasNotes) ...[
                     const SizedBox(width: 8),
