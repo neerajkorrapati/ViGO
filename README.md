@@ -4,7 +4,7 @@ A campus transit and carpooling network for VIT Vellore.
 
 Getting from Katpadi Railway Station or Chennai Airport back to the VIT Main Gate is expensive if you are traveling alone. ViGo is a web application built to connect students who are heading the same way so they can share rides and split the fare.
 
-Live deployment: [vigovit.web.app](https://www.google.com/search?q=https://vigovit.web.app)
+Live deployment: [vigovit.web.app](https://vigovit.web.app/)
 
 ## Key Features
 
