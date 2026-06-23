@@ -42,7 +42,7 @@ class LandingScreen extends StatelessWidget {
                         ),
                         const SizedBox(height: 24),
                         Text(
-                          "Stop overpaying for cabs. Match with VITians, split the fare, and travel smart..",
+                          "Stop overpaying for cabs. Match with VITians, split the fare, and travel smart...",
                           
                           style: TextStyle(fontSize: 20, color: Colors.black.withOpacity(0.6), height: 1.6),
                           textAlign: isDesktop ? TextAlign.start : TextAlign.center,

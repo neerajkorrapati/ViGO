@@ -29,6 +29,7 @@ class _CreateRideScreenState extends State<CreateRideScreen> {
     "Vellore Bypass / Near DTDC",
     "Bangalore Airport",
     "Chennai Airport",
+    "Chittoor Bus Stand",
   ];
 
   @override
@@ -73,7 +74,7 @@ class _CreateRideScreenState extends State<CreateRideScreen> {
     }
 
     if (_pickupPoint == _destination) {
-      _showWarningSnackBar("Your pickup point and destination point cannot match.(Why would u wanna go to the same place from the same place xD!");
+      _showWarningSnackBar("Your pickup point and destination point cannot match.(Why would u wanna go to the same place from the same place xD!)");
       return;
     }
 
