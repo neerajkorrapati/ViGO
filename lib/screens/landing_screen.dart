@@ -18,7 +18,7 @@ class LandingScreen extends StatelessWidget {
           padding: const EdgeInsets.only(left: 16.0),
           child: Image.network(
             "/vigo_full_logo.jpeg",
-            height: 30, // Perfectly scaled for the header
+            height: 50, // Perfectly scaled for the header
             fit: BoxFit.contain,
           ),
         ),

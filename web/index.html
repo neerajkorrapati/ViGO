@@ -56,9 +56,49 @@
       touch-action: pan-x pan-y !important;
       -webkit-overflow-scrolling: touch !important;
     }
+    /* Responsive splash and loading styles */
+    .fullscreen-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      background-color: #F8F9FA;
+      overflow: hidden;
+    }
+    #loading-overlay {
+      z-index: 99998;
+      display: flex;
+      border: none !important;
+      outline: none !important;
+      box-shadow: none !important;
+    }
+    #loading-gif {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      border: none !important;
+      outline: none !important;
+      box-shadow: none !important;
+    }
   </style>
+  <script>
+    window.addEventListener('flutter-first-frame', function() {
+      var loadingOverlay = document.getElementById('loading-overlay');
+      if (loadingOverlay) {
+        loadingOverlay.remove();
+      }
+    });
+  </script>
 </head>
 <body>
+  <!-- Loader Screen Overlay -->
+  <div id="loading-overlay" class="fullscreen-overlay">
+    <img id="loading-gif" src="assets/loadScreen.gif" alt="Loading...">
+  </div>
 
   <div id="seo-fallback-content" style="position: absolute; left: -9999px; top: -9999px; width: 1px; height: 1px; overflow: hidden;">
     <h1>VIT Carpool</h1>

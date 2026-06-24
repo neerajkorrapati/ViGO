@@ -6,6 +6,7 @@ import '../models/user_model.dart';
 import '../services/firestore_service.dart';
 import '../services/notification_service.dart';
 import '../services/auth_service.dart';
+import '../services/toast_service.dart';
 
 class PartyCard extends StatefulWidget {
   final PartyModel party;
@@ -41,9 +42,7 @@ class _PartyCardState extends State<PartyCard> {
     final String? uid = _auth.currentUserId;
     
     if (uid == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Session expired. Please log out and in again."))
-      );
+      ToastService.show(context, "Session expired. Please log out and in again.", isWarning: true);
       return;
     }
 
@@ -69,7 +68,7 @@ class _PartyCardState extends State<PartyCard> {
       _openWhatsApp();
       
     } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
+      if (mounted) ToastService.show(context, e.toString(), isWarning: true);
     } finally {
       if (mounted) setState(() => _isJoining = false);
     }
@@ -114,9 +113,9 @@ class _PartyCardState extends State<PartyCard> {
         );
       }
 
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('You left the party.')));
+      if (mounted) ToastService.show(context, 'You left the party.');
     } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
+      if (mounted) ToastService.show(context, e.toString(), isWarning: true);
     } finally {
       if (mounted) setState(() => _isLeaving = false);
     }
@@ -135,9 +134,7 @@ class _PartyCardState extends State<PartyCard> {
       await launchUrl(uri, mode: LaunchMode.externalApplication);
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Could not open WhatsApp. Check your browser settings."))
-        );
+        ToastService.show(context, "Could not open WhatsApp. Check your browser settings.", isWarning: true);
       }
     }
   }
