@@ -816,12 +816,43 @@ class _RideListScreenState extends State<RideListScreen> {
               }
 
               if (rides.isEmpty) return _buildEmptyState();
-
+             // CHANGES MADE HERE FOR LIST_BANNER TO REMIND USERS ON USING FILTERS
               return ListView.builder(
                 padding: const EdgeInsets.all(16),
-                itemCount: rides.length,
+                // 🔥 Add +1 to the length to make room for the banner widget at index 0
+                itemCount: rides.length + 1,
                 itemBuilder: (context, index) {
-                  final doc = rides[index];
+                  // Index 0 renders the info message banner
+                  if (index == 0) {
+                    return Container(
+                      margin: const EdgeInsets.only(bottom: 16),
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      decoration: BoxDecoration(
+                        color: Colors.indigo[50],
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: Colors.indigo.withOpacity(0.1)),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(Icons.info_outline, size: 18, color: Colors.indigo[700]),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Text(
+                              "Showing the 15 most recent rides. Use filters above to explore more journeys!",
+                              style: TextStyle(
+                                color: Colors.indigo[900],
+                                fontSize: 12,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  }
+
+                  // Adjust the indexing by -1 for the actual ride cards
+                  final doc = rides[index - 1];
                   final ride = Ride.fromFirestore(doc);
                   final data = doc.data() as Map<String, dynamic>;
                   final String vehicle = data['vehicleType'] ?? 'Auto';
