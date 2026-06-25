@@ -728,13 +728,18 @@ class _RideListScreenState extends State<RideListScreen> {
   Widget _buildExplorePoolsFeed() {
     final bool isDesktop = MediaQuery.of(context).size.width > 800;
 
-    Widget buildMainList() {
-      return StreamBuilder<QuerySnapshot>(
-        stream: FirebaseFirestore.instance.collection('rides').limit(15).snapshots(), // changing limit to 15 users from 30, to reduce server read operations load.
-        builder: (context, snapshot) {
-          if (snapshot.hasError) return Center(child: Text("Database Connection Issue: ${snapshot.error}"));
-          if (snapshot.connectionState == ConnectionState.waiting) return _buildFullScreenLoader();
-          
+    return StreamBuilder<QuerySnapshot>(
+      stream: FirebaseFirestore.instance.collection('rides').limit(15).snapshots(), // changing limit to 15 users from 30, to reduce server read operations load.
+      builder: (context, snapshot) {
+        final bool isLoading = snapshot.connectionState == ConnectionState.waiting;
+        final bool hasError = snapshot.hasError;
+
+        Widget mainContent;
+        if (hasError) {
+          mainContent = Center(child: Text("Database Connection Issue: ${snapshot.error}"));
+        } else if (isLoading) {
+          mainContent = _buildFullScreenLoader();
+        } else {
           final rawRides = snapshot.data?.docs ?? [];
           final now = DateTime.now();
 
@@ -790,50 +795,74 @@ class _RideListScreenState extends State<RideListScreen> {
             rides = rides.sublist(0, 15);
           }
 
-          if (rides.isEmpty) return _buildEmptyState();
+          if (rides.isEmpty) {
+            mainContent = _buildEmptyState();
+          } else {
+            mainContent = ListView.builder(
+              padding: const EdgeInsets.all(16),
+              itemCount: rides.length,
+              itemBuilder: (context, index) {
+                final doc = rides[index];
+                final ride = Ride.fromFirestore(doc);
+                final data = doc.data() as Map<String, dynamic>;
+                final String vehicle = data['vehicleType'] ?? 'Auto';
+                final String phone = data['driverPhone'] ?? '';
+                return _buildPremiumRideCard(ride, vehicle, phone, doc.id, data);
+              },
+            );
+          }
+        }
 
-          return ListView.builder(
-            padding: const EdgeInsets.all(16),
-            itemCount: rides.length,
-            itemBuilder: (context, index) {
-              final doc = rides[index];
-              final ride = Ride.fromFirestore(doc);
-              final data = doc.data() as Map<String, dynamic>;
-              final String vehicle = data['vehicleType'] ?? 'Auto';
-              final String phone = data['driverPhone'] ?? '';
-              return _buildPremiumRideCard(ride, vehicle, phone, doc.id, data);
-            },
+        final decoration = isLoading
+            ? const BoxDecoration(color: Colors.white)
+            : const BoxDecoration(
+                image: DecorationImage(
+                  image: AssetImage('web/assets/rideListBG.jpeg'),
+                  repeat: ImageRepeat.repeat,
+                ),
+              );
+
+        if (isDesktop) {
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Expanded(
+                child: Container(
+                  decoration: decoration,
+                  child: Center(
+                    child: SizedBox(
+                      width: 580,
+                      child: mainContent,
+                    ),
+                  ),
+                ),
+              ),
+              Container(
+                width: 320,
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  border: Border(left: BorderSide(color: Colors.grey[200]!)),
+                ),
+                child: _buildDesktopFilterSidebar(),
+              ),
+            ],
           );
-        },
-      );
-    }
-
-    if (isDesktop) {
-      return Row(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Expanded(child: buildMainList()),
-          Container(
-            width: 320,
-            decoration: BoxDecoration(
-              color: Colors.white,
-              border: Border(left: BorderSide(color: Colors.grey[200]!)),
-            ),
-            child: _buildDesktopFilterSidebar(),
-          ),
-        ],
-      );
-    } else {
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          _buildFilterDock(), 
-          Expanded(
-            child: buildMainList(),
-          ),
-        ],
-      );
-    }
+        } else {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _buildFilterDock(), 
+              Expanded(
+                child: Container(
+                  decoration: decoration,
+                  child: mainContent,
+                ),
+              ),
+            ],
+          );
+        }
+      },
+    );
   }
 
   Widget _buildVehicleModeSelector() {
@@ -2001,11 +2030,16 @@ class _RideListScreenState extends State<RideListScreen> {
   }
 
   Widget _buildFullScreenLoader() {
-    return SizedBox.expand(
-      child: Image.network(
-        'assets/loadScreen.gif',
-        fit: BoxFit.cover,
-        alignment: Alignment.center,
+    return Container(
+      color: Colors.white,
+      alignment: Alignment.center,
+      child: SizedBox(
+        width: 300,
+        height: 300,
+        child: Image.network(
+          'assets/loadScreen.gif',
+          fit: BoxFit.contain,
+        ),
       ),
     );
   }
@@ -2116,107 +2150,75 @@ class _RideListScreenState extends State<RideListScreen> {
 
     return InkWell(
       onTap: () => _handleRideTap(docId, rawData, isMyOwnRide, totalCapacity, emptySeats),
-      borderRadius: BorderRadius.circular(16),
       child: Container(
-        margin: const EdgeInsets.only(bottom: 12),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: Colors.grey[200]!, width: 1),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.02),
-              blurRadius: 6,
-              offset: const Offset(0, 3),
-            ),
-          ],
-        ),
-        child: IntrinsicHeight(
-          child: Row(
+        margin: const EdgeInsets.only(bottom: 16),
+        child: TicketCard(
+          cutPosition: 64.0,
+          cutRadius: 10.0,
+          child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-            // Left main section
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 16.0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              // Header Section (above notches, height 64)
+              Container(
+                height: 64,
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                alignment: Alignment.center,
+                child: Row(
                   children: [
-                    // Top: Pill tag, Host name, Subtitle
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        _buildVehicleBadge(vehicle),
-                        const SizedBox(height: 6),
-                        Row(
-                          children: [
-                            Text(
-                              hostName,
-                              style: GoogleFonts.inriaSans(
-                                fontWeight: FontWeight.bold,
-                                fontSize: 16,
-                                color: Colors.black87,
-                              ),
-                            ),
-                            if (hasNotes) ...[
-                              const SizedBox(width: 6),
-                              InkWell(
-                                onTap: () => _showNotesDialog(docId, rawData, isMyOwnRide),
-                                borderRadius: BorderRadius.circular(20),
-                                child: Container(
-                                  padding: const EdgeInsets.all(4),
-                                  decoration: BoxDecoration(color: Colors.blue[50], shape: BoxShape.circle),
-                                  child: const Icon(Icons.speaker_notes, size: 10, color: Colors.blue),
-                                ),
-                              ),
-                            ],
-                            if (isMyOwnRide) ...[
-                              const SizedBox(width: 6),
-                              InkWell(
-                                onTap: () => _confirmDeleteRide(docId),
-                                borderRadius: BorderRadius.circular(20),
-                                child: Container(
-                                  padding: const EdgeInsets.all(4),
-                                  decoration: BoxDecoration(color: Colors.red[50], shape: BoxShape.circle),
-                                  child: const Icon(Icons.delete_outline, size: 11, color: Colors.redAccent),
-                                ),
-                              ),
-                            ],
-                          ],
+                    CircleAvatar(
+                      radius: 16,
+                      backgroundColor: const Color(0xFFE8EAF6),
+                      child: Text(
+                        hostName.isNotEmpty ? hostName.substring(0, 1).toUpperCase() : 'U',
+                        style: GoogleFonts.inriaSans(
+                          color: const Color(0xFF3F51B5),
+                          fontWeight: FontWeight.bold,
+                          fontSize: 13,
                         ),
-                        const SizedBox(height: 2),
-                        Text.rich(
-                          TextSpan(
-                            children: [
-                              TextSpan(
-                                text: "Verified VIT Student",
-                                style: GoogleFonts.inriaSans(
-                                  color: Colors.green[600],
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                              TextSpan(
-                                text: " • ${_getTimeAgo(rawData['timestamp'] ?? rawData['createdAt'])}",
-                                style: GoogleFonts.inriaSans(
-                                  color: Colors.grey[500],
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.normal,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
+                      ),
                     ),
-                    const SizedBox(height: 12),
-                    // Bottom: Car, Source details, Trajectory, Destination details
+                    const SizedBox(width: 10),
+                    Text(
+                      hostName,
+                      style: GoogleFonts.inriaSans(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                        color: Colors.black87,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    const Icon(Icons.check_circle, color: Colors.green, size: 16),
+                    if (hasNotes) ...[
+                      const SizedBox(width: 6),
+                      InkWell(
+                        onTap: () => _showNotesDialog(docId, rawData, isMyOwnRide),
+                        child: const Icon(Icons.speaker_notes, size: 14, color: Colors.blue),
+                      ),
+                    ],
+                    if (isMyOwnRide) ...[
+                      const SizedBox(width: 6),
+                      InkWell(
+                        onTap: () => _confirmDeleteRide(docId),
+                        child: const Icon(Icons.delete_outline, size: 16, color: Colors.redAccent),
+                      ),
+                    ],
+                    const Spacer(),
+                    _buildVehicleBadge(vehicle),
+                  ],
+                ),
+              ),
+              
+              // Body Section (below notches)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    // Route Detail Row
                     Row(
                       crossAxisAlignment: CrossAxisAlignment.center,
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        _buildCarAvatarWidget(profilePicUrl, hostName, 92, isDesktop: true),
-                        const SizedBox(width: 24),
                         _buildLocationDetailColumn(pickupCity, pickupAbbr, departureTimeStr, crossAxisAlignment: CrossAxisAlignment.start),
                         const SizedBox(width: 12),
                         Expanded(
@@ -2226,101 +2228,94 @@ class _RideListScreenState extends State<RideListScreen> {
                         _buildLocationDetailColumn(destCity, destAbbr, arrivalTimeStr, crossAxisAlignment: CrossAxisAlignment.end),
                       ],
                     ),
+                    const SizedBox(height: 16),
+                    // Metadata Row: Joined, spots, countdown
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Row(
+                          children: [
+                            Icon(Icons.group_rounded, size: 16, color: Colors.indigo[800]),
+                            const SizedBox(width: 6),
+                            Text(
+                              "$joinedCount joined",
+                              style: GoogleFonts.instrumentSans(
+                                color: Colors.indigo[800],
+                                fontSize: 13,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
+                        ),
+                        Text(
+                          currentAvailable <= 0 ? "Full" : "$currentAvailable spots left",
+                          style: GoogleFonts.instrumentSans(
+                            color: currentAvailable <= 0 ? Colors.red : Colors.green[700],
+                            fontSize: 13,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        Text(
+                          _formatDepartureCountdown(ride.departureTime),
+                          style: GoogleFonts.instrumentSans(
+                            color: Colors.orange[800],
+                            fontSize: 13,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    // Buttons Row (side-by-side)
+                    Row(
+                      children: [
+                        Expanded(
+                          child: SizedBox(
+                            height: 38,
+                            child: OutlinedButton.icon(
+                              onPressed: () {
+                                if (currentUser == null) {
+                                  _showLogin(() => _launchWhatsApp(phone, ride.driverId, hostName, ride.pickupPoint, ride.destination));
+                                } else {
+                                  _launchWhatsApp(phone, ride.driverId, hostName, ride.pickupPoint, ride.destination);
+                                }
+                              },
+                              icon: const Icon(Icons.chat_bubble_outline_rounded, size: 14),
+                              label: const Text("Chat", style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: Colors.indigo,
+                                side: BorderSide(color: Colors.indigo[100]!),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                                padding: EdgeInsets.zero,
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: SizedBox(
+                            height: 38,
+                            child: _buildResponsiveJoinButton(
+                              currentUser: currentUser,
+                              isMyOwnRide: isMyOwnRide,
+                              docId: docId,
+                              ride: ride,
+                              currentAvailable: currentAvailable,
+                              height: 38,
+                              borderRadius: 8,
+                              fontSize: 13,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
                   ],
                 ),
               ),
-            ),
-            // Vertical Divider
-            Container(
-              width: 1,
-              color: Colors.grey[200],
-            ),
-            // Right ticket stub section
-            Container(
-              width: 180,
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.end,
-                    children: [
-                      Icon(Icons.group_rounded, size: 14, color: Colors.indigo[800]),
-                      const SizedBox(width: 5),
-                      Text(
-                        "$joinedCount joined",
-                        style: GoogleFonts.instrumentSans(
-                          color: Colors.indigo[800],
-                          fontSize: 12,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    currentAvailable <= 0 ? "Full" : "$currentAvailable spots left",
-                    style: GoogleFonts.instrumentSans(
-                      color: currentAvailable <= 0 ? Colors.red : Colors.green[700],
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    _formatDepartureCountdown(ride.departureTime),
-                    style: GoogleFonts.instrumentSans(
-                      color: Colors.orange[800],
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  // Chat button
-                  SizedBox(
-                    width: double.infinity,
-                    height: 34,
-                    child: OutlinedButton.icon(
-                      onPressed: () {
-                        if (currentUser == null) {
-                          _showLogin(() => _launchWhatsApp(phone, ride.driverId, hostName, ride.pickupPoint, ride.destination));
-                        } else {
-                          _launchWhatsApp(phone, ride.driverId, hostName, ride.pickupPoint, ride.destination);
-                        }
-                      },
-                      icon: const Icon(Icons.chat_bubble_outline_rounded, size: 13),
-                      label: const Text("Chat", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: Colors.indigo,
-                        side: BorderSide(color: Colors.indigo[100]!),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                        padding: EdgeInsets.zero,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  // Join Ride button
-                  SizedBox(
-                    width: double.infinity,
-                    height: 34,
-                    child: _buildResponsiveJoinButton(
-                      currentUser: currentUser,
-                      isMyOwnRide: isMyOwnRide,
-                      docId: docId,
-                      ride: ride,
-                      currentAvailable: currentAvailable,
-                      height: 34,
-                      borderRadius: 8,
-                      fontSize: 12,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
+            ],
+          ),
         ),
-      ),),
+      ),
     );
   }
 
@@ -2527,17 +2522,32 @@ class _RideListScreenState extends State<RideListScreen> {
       children: [
         Text(
           city,
-          style: GoogleFonts.instrumentSans(color: Colors.grey[500], fontSize: 11, fontWeight: FontWeight.w500),
+          style: const TextStyle(
+            fontFamily: 'Times New Roman',
+            fontSize: 16,
+            fontWeight: FontWeight.w300, // thin
+            color: Colors.black54,
+          ),
         ),
         const SizedBox(height: 2),
         Text(
           abbreviation,
-          style: GoogleFonts.instrumentSans(color: Colors.black87, fontSize: 22, fontWeight: FontWeight.w800),
+          style: const TextStyle(
+            fontFamily: 'Times New Roman',
+            fontSize: 16,
+            fontWeight: FontWeight.w300, // thin
+            color: Colors.black87,
+          ),
         ),
         const SizedBox(height: 2),
         Text(
           dateTime,
-          style: GoogleFonts.instrumentSans(color: Colors.grey[600], fontSize: 11, fontWeight: FontWeight.w500),
+          style: const TextStyle(
+            fontFamily: 'Times New Roman',
+            fontSize: 16,
+            fontWeight: FontWeight.w300, // thin
+            color: Colors.black54,
+          ),
         ),
       ],
     );
