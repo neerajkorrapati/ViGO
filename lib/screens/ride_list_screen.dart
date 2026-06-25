@@ -28,12 +28,15 @@ class _RideListScreenState extends State<RideListScreen> {
   int _currentTabNavigationIndex = 0; 
   // 🔥 ADDED: This controls how many rides are drawn on the screen initially
   int _currentDisplayLimit = 10;
-
+// 🔥 1. Add this variable to hold the connection open
+  late Stream<QuerySnapshot> _ridesStream;
   @override
   void initState() {
     super.initState();
     // DISABLE 
     //_cleanUpPastRides();   : cleaning up the sweeper bot to reduce read operations on firebase servers.
+  // 🔥 2. Initialize the stream exactly ONCE when the app boots up
+    _ridesStream = FirebaseFirestore.instance.collection('rides').snapshots();
   }
 
   @override
@@ -836,7 +839,7 @@ class _RideListScreenState extends State<RideListScreen> {
         _buildFilterDock(), 
         Expanded(
           child: StreamBuilder<QuerySnapshot>(
-            stream: FirebaseFirestore.instance.collection('rides').snapshots(), 
+            stream: _ridesStream, //Change made here for flutter scroll fix
             builder: (context, snapshot) {
               if (snapshot.hasError) return Center(child: Text("Database Connection Issue: ${snapshot.error}"));
               if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
@@ -902,6 +905,7 @@ class _RideListScreenState extends State<RideListScreen> {
               return ListView.builder(
                 padding: const EdgeInsets.all(16),
                 // 🔥 3. Add +2 to make room for BOTH the Top Banner and Bottom Footer
+                key: const PageStorageKey('explore_rides_feed_scroll_state'), // 🔥 Change made here
                 itemCount: rides.length + 2, 
                 itemBuilder: (context, index) {
                   
