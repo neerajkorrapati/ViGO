@@ -26,6 +26,8 @@ class _RideListScreenState extends State<RideListScreen> {
   String _selectedVehicleFilter = 'All'; 
   DateTime? _selectedDateFilter; 
   int _currentTabNavigationIndex = 0; 
+  // 🔥 ADDED: This controls how many rides are drawn on the screen initially
+  int _currentDisplayLimit = 10;
 
   @override
   void initState() {
@@ -749,13 +751,92 @@ class _RideListScreenState extends State<RideListScreen> {
   }
 
   Widget _buildExplorePoolsFeed() {
+    final currentUser = FirebaseAuth.instance.currentUser;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        // 1. Live Glassmorphic Alert Bar for incoming host requests
+        if (currentUser != null)
+          StreamBuilder<QuerySnapshot>(
+            stream: FirebaseFirestore.instance
+                .collection('requests')
+                .where('driverId', isEqualTo: currentUser.uid)
+                .where('status', isEqualTo: 'pending')
+                .snapshots(),
+            builder: (context, reqSnapshot) {
+              if (reqSnapshot.hasData && reqSnapshot.data!.docs.isNotEmpty) {
+                final int totalInvites = reqSnapshot.data!.docs.length;
+
+                return InkWell(
+                  onTap: () {
+                    // Instantly switches tab navigation to 'My Hub'
+                    setState(() => _currentTabNavigationIndex = 2);
+                  },
+                  child: Container(
+                    margin: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                    decoration: BoxDecoration(
+                      color: Colors.orangeAccent.withOpacity(0.12),
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: Colors.orangeAccent.withOpacity(0.35), width: 1.5),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.orangeAccent.withOpacity(0.04),
+                          blurRadius: 10,
+                          offset: const Offset(0, 4),
+                        )
+                      ],
+                    ),
+                    child: Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: Colors.orangeAccent.withOpacity(0.2),
+                            shape: BoxShape.circle,
+                          ),
+                          child: Icon(Icons.notification_important_rounded, size: 20, color: Colors.orange[800]),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                "Action Required",
+                                style: TextStyle(
+                                  color: Colors.orange[900],
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 14,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                "You have received $totalInvites ride request${totalInvites > 1 ? 's' : ''}! Tap to review details.",
+                                style: TextStyle(
+                                  color: Colors.orange[800],
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        Icon(Icons.arrow_forward_ios_rounded, size: 14, color: Colors.orange[700]),
+                      ],
+                    ),
+                  ),
+                );
+              }
+              return const SizedBox.shrink(); 
+            },
+          ),
+
         _buildFilterDock(), 
         Expanded(
           child: StreamBuilder<QuerySnapshot>(
-            stream: FirebaseFirestore.instance.collection('rides').limit(15).snapshots(), // changing limit to 15 users from 30, to reduce server read operations load.
+            stream: FirebaseFirestore.instance.collection('rides').snapshots(), 
             builder: (context, snapshot) {
               if (snapshot.hasError) return Center(child: Text("Database Connection Issue: ${snapshot.error}"));
               if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
@@ -768,7 +849,8 @@ class _RideListScreenState extends State<RideListScreen> {
                 
                 if (data['departureTime'] != null) {
                   final depTime = (data['departureTime'] as Timestamp).toDate();
-                  if (depTime.isBefore(now)) return false; 
+                  final gracePeriod = now.subtract(const Duration(minutes: 10));
+                  if (depTime.isBefore(gracePeriod)) return false; 
                 }
 
                 final vType = data['vehicleType'] ?? 'Auto'; 
@@ -795,34 +877,35 @@ class _RideListScreenState extends State<RideListScreen> {
                 return true;
               }).toList();
 
-              // 🔥 ALWAYS SORTS BY MOST RECENTLY CREATED FIRST (Regardless of filters)
+              // ALWAYS SORTS BY MOST RECENTLY CREATED FIRST
               rides.sort((a, b) {
                 final aData = a.data() as Map<String, dynamic>;
                 final bData = b.data() as Map<String, dynamic>;
                 
-                // Uses the document creation time, safely falls back if missing
                 final Timestamp? aTime = aData['timestamp'] as Timestamp? ?? aData['createdAt'] as Timestamp? ?? aData['departureTime'] as Timestamp?;
                 final Timestamp? bTime = bData['timestamp'] as Timestamp? ?? bData['createdAt'] as Timestamp? ?? bData['departureTime'] as Timestamp?;
                 
                 if (aTime == null || bTime == null) return 0;
-                
-                // b.compareTo(a) reverses the order so the newest is at the top
                 return bTime.compareTo(aTime); 
               });
 
-              // 🔥 Truncate AFTER sorting to ensure you get the absolute 15 newest rides
-              if (rides.length > 15) {
-                rides = rides.sublist(0, 15);
+              // 🔥 1. Save the total number of matches BEFORE we chop the list
+              int totalMatches = rides.length;
+
+              // 🔥 2. Chop the list based on the dynamic limit
+              if (rides.length > _currentDisplayLimit) {
+                rides = rides.sublist(0, _currentDisplayLimit);
               }
 
               if (rides.isEmpty) return _buildEmptyState();
-             // CHANGES MADE HERE FOR LIST_BANNER TO REMIND USERS ON USING FILTERS
+
               return ListView.builder(
                 padding: const EdgeInsets.all(16),
-                // 🔥 Add +1 to the length to make room for the banner widget at index 0
-                itemCount: rides.length + 1,
+                // 🔥 3. Add +2 to make room for BOTH the Top Banner and Bottom Footer
+                itemCount: rides.length + 2, 
                 itemBuilder: (context, index) {
-                  // Index 0 renders the info message banner
+                  
+                  // 🔥 4. TOP BANNER (Index 0)
                   if (index == 0) {
                     return Container(
                       margin: const EdgeInsets.only(bottom: 16),
@@ -838,12 +921,8 @@ class _RideListScreenState extends State<RideListScreen> {
                           const SizedBox(width: 10),
                           Expanded(
                             child: Text(
-                              "Showing the 15 most recent rides. Use filters above to explore more journeys!",
-                              style: TextStyle(
-                                color: Colors.indigo[900],
-                                fontSize: 12,
-                                fontWeight: FontWeight.w500,
-                              ),
+                              "Showing active pools. Use filters above to explore specific journeys!",
+                              style: TextStyle(color: Colors.indigo[900], fontSize: 12, fontWeight: FontWeight.w500),
                             ),
                           ),
                         ],
@@ -851,12 +930,55 @@ class _RideListScreenState extends State<RideListScreen> {
                     );
                   }
 
-                  // Adjust the indexing by -1 for the actual ride cards
+                  // 🔥 5. BOTTOM FOOTER (Rendered at the very last index)
+                  if (index == rides.length + 1) {
+                    if (totalMatches > _currentDisplayLimit) {
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 24),
+                        child: Center(
+                          child: OutlinedButton.icon(
+                            onPressed: () {
+                              setState(() {
+                                _currentDisplayLimit += 5; // Adds 5 more rides to the UI
+                              });
+                            },
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: Colors.indigo,
+                              side: BorderSide(color: Colors.indigo.withOpacity(0.3)),
+                              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                            ),
+                            icon: const Icon(Icons.add_circle_outline),
+                            label: const Text("Show more rides", style: TextStyle(fontWeight: FontWeight.bold)),
+                          ),
+                        ),
+                      );
+                    } else {
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 32),
+                        child: Center(
+                          child: Column(
+                            children: [
+                              Icon(Icons.flag_circle_outlined, color: Colors.grey[400], size: 32),
+                              const SizedBox(height: 8),
+                              Text(
+                                "You've reached the end of the road!",
+                                style: TextStyle(color: Colors.grey[500], fontWeight: FontWeight.w600, fontSize: 13),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    }
+                  }
+
+                  // 🔥 6. NORMAL RIDE CARDS (Offset by -1 to account for the top banner)
                   final doc = rides[index - 1];
                   final ride = Ride.fromFirestore(doc);
                   final data = doc.data() as Map<String, dynamic>;
                   final String vehicle = data['vehicleType'] ?? 'Auto';
                   final String phone = data['driverPhone'] ?? '';
+                  
                   return _buildPremiumRideCard(ride, vehicle, phone, doc.id, data);
                 },
               );
