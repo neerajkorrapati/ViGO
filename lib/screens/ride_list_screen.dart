@@ -755,11 +755,11 @@ class _RideListScreenState extends State<RideListScreen> {
 
   Widget _buildExplorePoolsFeed() {
     final currentUser = FirebaseAuth.instance.currentUser;
-
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // 1. Live Glassmorphic Alert Bar for incoming host requests
+        
+        // 🌟 1. Glassmorphic Alert Bar for Incoming Host Invites
         if (currentUser != null)
           StreamBuilder<QuerySnapshot>(
             stream: FirebaseFirestore.instance
@@ -770,7 +770,6 @@ class _RideListScreenState extends State<RideListScreen> {
             builder: (context, reqSnapshot) {
               if (reqSnapshot.hasData && reqSnapshot.data!.docs.isNotEmpty) {
                 final int totalInvites = reqSnapshot.data!.docs.length;
-
                 return InkWell(
                   onTap: () {
                     // Instantly switches tab navigation to 'My Hub'
@@ -807,7 +806,7 @@ class _RideListScreenState extends State<RideListScreen> {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                "Action Required",
+                                "Ride Requests Available",//PENDING RIDE INVITES ALERT
                                 style: TextStyle(
                                   color: Colors.orange[900],
                                   fontWeight: FontWeight.bold,
@@ -837,16 +836,17 @@ class _RideListScreenState extends State<RideListScreen> {
           ),
 
         _buildFilterDock(), 
+        
         Expanded(
           child: StreamBuilder<QuerySnapshot>(
-            stream: _ridesStream, //Change made here for flutter scroll fix
+            // Uses the saved stream so UI state doesn't reset on pagination
+            stream: _ridesStream, 
             builder: (context, snapshot) {
               if (snapshot.hasError) return Center(child: Text("Database Connection Issue: ${snapshot.error}"));
               if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
               
               final rawRides = snapshot.data?.docs ?? [];
               final now = DateTime.now();
-
               var rides = rawRides.where((doc) {
                 final data = doc.data() as Map<String, dynamic>;
                 
@@ -876,15 +876,12 @@ class _RideListScreenState extends State<RideListScreen> {
                     if (!destination.contains(query)) return false;
                   }
                 }
-
                 return true;
               }).toList();
 
-              // ALWAYS SORTS BY MOST RECENTLY CREATED FIRST
               rides.sort((a, b) {
                 final aData = a.data() as Map<String, dynamic>;
                 final bData = b.data() as Map<String, dynamic>;
-                
                 final Timestamp? aTime = aData['timestamp'] as Timestamp? ?? aData['createdAt'] as Timestamp? ?? aData['departureTime'] as Timestamp?;
                 final Timestamp? bTime = bData['timestamp'] as Timestamp? ?? bData['createdAt'] as Timestamp? ?? bData['departureTime'] as Timestamp?;
                 
@@ -892,24 +889,21 @@ class _RideListScreenState extends State<RideListScreen> {
                 return bTime.compareTo(aTime); 
               });
 
-              // 🔥 1. Save the total number of matches BEFORE we chop the list
               int totalMatches = rides.length;
 
-              // 🔥 2. Chop the list based on the dynamic limit
               if (rides.length > _currentDisplayLimit) {
                 rides = rides.sublist(0, _currentDisplayLimit);
               }
 
               if (rides.isEmpty) return _buildEmptyState();
-
+              
               return ListView.builder(
+                // PageStorageKey preserves the exact scroll position 
+                key: const PageStorageKey('explore_rides_feed_scroll_state'),
                 padding: const EdgeInsets.all(16),
-                // 🔥 3. Add +2 to make room for BOTH the Top Banner and Bottom Footer
-                key: const PageStorageKey('explore_rides_feed_scroll_state'), // 🔥 Change made here
                 itemCount: rides.length + 2, 
                 itemBuilder: (context, index) {
                   
-                  // 🔥 4. TOP BANNER (Index 0)
                   if (index == 0) {
                     return Container(
                       margin: const EdgeInsets.only(bottom: 16),
@@ -934,7 +928,6 @@ class _RideListScreenState extends State<RideListScreen> {
                     );
                   }
 
-                  // 🔥 5. BOTTOM FOOTER (Rendered at the very last index)
                   if (index == rides.length + 1) {
                     if (totalMatches > _currentDisplayLimit) {
                       return Padding(
@@ -943,7 +936,7 @@ class _RideListScreenState extends State<RideListScreen> {
                           child: OutlinedButton.icon(
                             onPressed: () {
                               setState(() {
-                                _currentDisplayLimit += 5; // Adds 5 more rides to the UI
+                                _currentDisplayLimit += 5; 
                               });
                             },
                             style: OutlinedButton.styleFrom(
@@ -976,7 +969,6 @@ class _RideListScreenState extends State<RideListScreen> {
                     }
                   }
 
-                  // 🔥 6. NORMAL RIDE CARDS (Offset by -1 to account for the top banner)
                   final doc = rides[index - 1];
                   final ride = Ride.fromFirestore(doc);
                   final data = doc.data() as Map<String, dynamic>;
