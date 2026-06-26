@@ -564,7 +564,7 @@ class _RideListScreenState extends State<RideListScreen> {
         return ListTile(
           contentPadding: EdgeInsets.zero,
           leading: CircleAvatar(
-            backgroundColor: (occ['color'] as Color).withOpacity(0.1),
+            backgroundColor: (occ['color'] as Color).withValues(alpha: 0.1),
             child: Icon(occ['role'] == 'Host' ? Icons.star : Icons.person, color: occ['color'], size: 18),
           ),
           title: Text(isMe ? "${occ['name']} (You)" : occ['name'], style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
@@ -594,7 +594,7 @@ class _RideListScreenState extends State<RideListScreen> {
           child: InkWell(
             onTap: () => setState(() => _currentTabNavigationIndex = 0),
             borderRadius: BorderRadius.circular(8),
-            splashColor: Colors.indigo.withOpacity(0.1),
+            splashColor: Colors.indigo.withValues(alpha: 0.1),
             highlightColor: Colors.transparent,
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
@@ -892,7 +892,7 @@ class _RideListScreenState extends State<RideListScreen> {
         border: Border.all(color: const Color(0xFFE9E8FA), width: 1.5),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.04),
+            color: Colors.black.withValues(alpha: 0.04),
             blurRadius: 10,
             offset: const Offset(0, 4),
           ),
@@ -933,7 +933,7 @@ class _RideListScreenState extends State<RideListScreen> {
                                     shape: BoxShape.circle,
                                     boxShadow: [
                                       BoxShadow(
-                                        color: Colors.black.withOpacity(0.05),
+                                        color: Colors.black.withValues(alpha: 0.05),
                                         blurRadius: 8,
                                         offset: const Offset(0, 3),
                                       ),
@@ -1107,7 +1107,7 @@ class _RideListScreenState extends State<RideListScreen> {
           backgroundColor: const Color(0xFF2E4ECF), // blue color from image
           foregroundColor: Colors.white,
           elevation: 4,
-          shadowColor: Colors.black.withOpacity(0.3),
+          shadowColor: Colors.black.withValues(alpha: 0.3),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(16),
           ),
@@ -1276,7 +1276,7 @@ class _RideListScreenState extends State<RideListScreen> {
         color: Colors.white,
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.04),
+            color: Colors.black.withValues(alpha: 0.04),
             blurRadius: 10,
             offset: const Offset(0, 4),
           ),
@@ -1324,7 +1324,7 @@ class _RideListScreenState extends State<RideListScreen> {
                 decoration: BoxDecoration(
                   color: Colors.indigo[50],
                   borderRadius: BorderRadius.circular(14),
-                  border: Border.all(color: Colors.indigo.withOpacity(0.1)),
+                  border: Border.all(color: Colors.indigo.withValues(alpha: 0.1)),
                 ),
                 child: DropdownButtonHideUnderline(
                   child: DropdownButton<String>(
@@ -1631,7 +1631,7 @@ class _RideListScreenState extends State<RideListScreen> {
           decoration: BoxDecoration(
             color: Colors.white,
             borderRadius: BorderRadius.circular(20),
-            boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 10, offset: const Offset(0, 4))],
+            boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 10, offset: const Offset(0, 4))],
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -2618,7 +2618,7 @@ class _RideListScreenState extends State<RideListScreen> {
                 border: Border.all(color: Colors.white, width: 1.5),
                 boxShadow: [
                   BoxShadow(
-                    color: Colors.black.withOpacity(0.1),
+                    color: Colors.black.withValues(alpha: 0.1),
                     blurRadius: 3,
                     offset: const Offset(0, 1.5),
                   ),
@@ -2629,7 +2629,7 @@ class _RideListScreenState extends State<RideListScreen> {
                     ? Image.network(
                         profilePic,
                         fit: BoxFit.cover,
-                        errorBuilder: (ctx, _, __) => _buildInitialsAvatar(hostName),
+                        errorBuilder: (ctx, _, _) => _buildInitialsAvatar(hostName),
                       )
                     : _buildInitialsAvatar(hostName),
               ),
@@ -2858,7 +2858,7 @@ class _RideListScreenState extends State<RideListScreen> {
           onPressed: onPressedAction,
           style: ElevatedButton.styleFrom(
             backgroundColor: btnColor,
-            disabledBackgroundColor: btnColor.withOpacity(0.8),
+            disabledBackgroundColor: btnColor.withValues(alpha: 0.8),
             disabledForegroundColor: Colors.white,
             foregroundColor: Colors.white,
             elevation: 0,
@@ -2991,7 +2991,7 @@ class TicketCardPainter extends CustomPainter {
     path.close();
 
     // Draw shadow
-    canvas.drawShadow(path, Colors.black.withOpacity(0.06), 5.0, true);
+    canvas.drawShadow(path, Colors.black.withValues(alpha: 0.06), 5.0, true);
 
     // Fill with white
     final fillPaint = Paint()

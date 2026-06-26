@@ -169,7 +169,7 @@ class _ToastWidgetState extends State<_ToastWidget> with SingleTickerProviderSta
                 ),
                 boxShadow: [
                   BoxShadow(
-                    color: Colors.black.withOpacity(0.08),
+                    color: Colors.black.withValues(alpha: 0.08),
                     blurRadius: 16,
                     offset: const Offset(0, 8),
                   ),
@@ -212,7 +212,7 @@ class _ToastWidgetState extends State<_ToastWidget> with SingleTickerProviderSta
                     onTap: _dismiss,
                     child: Padding(
                       padding: const EdgeInsets.all(2.0),
-                      child: Icon(Icons.close, color: iconColor.withOpacity(0.6), size: 18),
+                      child: Icon(Icons.close, color: iconColor.withValues(alpha: 0.6), size: 18),
                     ),
                   ),
                 ],

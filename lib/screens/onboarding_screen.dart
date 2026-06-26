@@ -50,7 +50,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
         TextFormField(controller: _regNoController, decoration: const InputDecoration(labelText: "Reg No")),
         TextFormField(controller: _branchController, decoration: const InputDecoration(labelText: "Branch")),
         TextFormField(controller: _phoneController, decoration: const InputDecoration(labelText: "Phone")),
-        DropdownButtonFormField<String>(value: _gender, items: ['Male', 'Female'].map((g) => DropdownMenuItem(value: g, child: Text(g))).toList(), onChanged: (v) => setState(() => _gender = v!)),
+        DropdownButtonFormField<String>(initialValue: _gender, items: ['Male', 'Female'].map((g) => DropdownMenuItem(value: g, child: Text(g))).toList(), onChanged: (v) => setState(() => _gender = v!)),
         const SizedBox(height: 32),
         ElevatedButton(onPressed: _submit, child: const Text("Save and Continue")),
       ])),

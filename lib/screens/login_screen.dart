@@ -42,7 +42,7 @@ class _LoginScreenState extends State<LoginScreen> {
               Container(
                 padding: const EdgeInsets.all(24),
                 decoration: BoxDecoration(
-                  color: const Color(0xFF1A53FF).withOpacity(0.1),
+                  color: const Color(0xFF1A53FF).withValues(alpha: 0.1),
                   shape: BoxShape.circle,
                 ),
                 child: const Icon(Icons.directions_car, size: 80, color: Color(0xFF1A53FF)),
