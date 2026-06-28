@@ -19,6 +19,7 @@ class RideListScreen extends StatefulWidget {
 }
 
 class _RideListScreenState extends State<RideListScreen> {
+  final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
   final _authService = AuthService();
   final TextEditingController _profilePhoneController = TextEditingController();
   final TextEditingController _locationSearchController = TextEditingController();
@@ -583,6 +584,9 @@ class _RideListScreenState extends State<RideListScreen> {
   Widget build(BuildContext context) {
     final bool isDesktop = MediaQuery.of(context).size.width > 800;
     return Scaffold(
+      key: _scaffoldKey,
+      endDrawer: _buildRequestsDrawer(),
+      drawerScrimColor: Colors.black.withValues(alpha: 0.35),
       backgroundColor: const Color(0xFFF8F9FA), 
       appBar: AppBar(
         backgroundColor: Colors.white,
@@ -609,13 +613,58 @@ class _RideListScreenState extends State<RideListScreen> {
         actions: [
           StreamBuilder<User?>(
             stream: _authService.user,
-            builder: (context, snapshot) {
-              if (snapshot.hasData) {
-                return IconButton(
-                  icon: const Icon(Icons.logout, color: Colors.redAccent),
-                  onPressed: () async {
-                    await _authService.signOut();
-                    web.window.location.reload(); 
+            builder: (context, authSnap) {
+              final user = authSnap.data;
+              if (user != null) {
+                return StreamBuilder<QuerySnapshot>(
+                  stream: FirebaseFirestore.instance
+                      .collection('requests')
+                      .where('driverId', isEqualTo: user.uid)
+                      .where('status', isEqualTo: 'pending')
+                      .snapshots(),
+                  builder: (context, reqSnap) {
+                    int pendingCount = 0;
+                    if (reqSnap.hasData) {
+                      pendingCount = reqSnap.data!.docs.length;
+                    }
+                    
+                    return Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        IconButton(
+                          icon: Badge(
+                            isLabelVisible: pendingCount > 0,
+                            backgroundColor: Colors.redAccent,
+                            label: Text(
+                              pendingCount.toString(),
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            child: const Icon(
+                              Icons.notifications_active,
+                              color: Color(0xFFD49E35), // Golden beige bell icon
+                              size: 24,
+                            ),
+                          ),
+                          onPressed: () {
+                            _scaffoldKey.currentState?.openEndDrawer();
+                          },
+                        ),
+                        const SizedBox(width: 4),
+                        IconButton(
+                          icon: const Icon(Icons.logout, color: Colors.redAccent),
+                          tooltip: 'Logout',
+                          onPressed: () async {
+                            await _authService.signOut();
+                            web.window.location.reload(); 
+                          },
+                        ),
+                        const SizedBox(width: 8),
+                      ],
+                    );
                   },
                 );
               }
@@ -2891,6 +2940,345 @@ class _RideListScreenState extends State<RideListScreen> {
 
   void _showSnackBar(String msg) {
     ToastService.show(context, msg);
+  }
+
+  Widget _buildRequestsDrawer() {
+    final double screenWidth = MediaQuery.of(context).size.width;
+    final double drawerWidth = screenWidth > 800 ? (screenWidth * 0.3).clamp(360.0, 500.0) : screenWidth * 0.85;
+
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      return const SizedBox.shrink();
+    }
+
+    return SizedBox(
+      width: drawerWidth,
+      child: Drawer(
+        backgroundColor: Colors.white,
+        child: StreamBuilder<QuerySnapshot>(
+          stream: FirebaseFirestore.instance
+              .collection('requests')
+              .where('driverId', isEqualTo: user.uid)
+              .where('status', isEqualTo: 'pending')
+              .snapshots(),
+          builder: (context, snapshot) {
+            if (snapshot.connectionState == ConnectionState.waiting) {
+              return const Center(child: CircularProgressIndicator());
+            }
+
+            final reqDocs = snapshot.data?.docs ?? [];
+            
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // Drawer Header
+                Container(
+                  padding: const EdgeInsets.fromLTRB(20, 24, 20, 16),
+                  decoration: const BoxDecoration(
+                    border: Border(bottom: BorderSide(color: Color(0xFFF1F3F5))),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            "Recent Ride Invites",
+                            style: GoogleFonts.instrumentSans(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.black87,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            "You have ${reqDocs.length} new invites",
+                            style: GoogleFonts.instrumentSans(
+                              fontSize: 13,
+                              color: Colors.indigo[600],
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.close_rounded, color: Colors.grey),
+                        onPressed: () => Navigator.pop(context),
+                      ),
+                    ],
+                  ),
+                ),
+
+                // Drawer Body - Requests List
+                Expanded(
+                  child: reqDocs.isEmpty
+                      ? _buildEmptyInvitesState()
+                      : ListView.separated(
+                          padding: const EdgeInsets.all(20),
+                          itemCount: reqDocs.length,
+                          separatorBuilder: (context, index) => const Divider(height: 24, color: Color(0xFFF1F3F5)),
+                          itemBuilder: (context, index) {
+                            final doc = reqDocs[index];
+                            final data = doc.data() as Map<String, dynamic>;
+                            return _buildDrawerInviteCard(doc.id, data);
+                          },
+                        ),
+                ),
+
+                // Drawer Footer
+                if (reqDocs.isNotEmpty)
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+                    decoration: const BoxDecoration(
+                      border: Border(top: BorderSide(color: Color(0xFFF1F3F5))),
+                    ),
+                    child: TextButton(
+                      onPressed: () {
+                        Navigator.pop(context); // Close drawer
+                        setState(() {
+                          _currentTabNavigationIndex = 2; // Go to Hub tab
+                        });
+                      },
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Text(
+                            "View all invites",
+                            style: GoogleFonts.instrumentSans(
+                              color: Colors.indigo[800],
+                              fontWeight: FontWeight.bold,
+                              fontSize: 14,
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          Icon(Icons.arrow_forward_ios_rounded, size: 12, color: Colors.indigo[800]),
+                        ],
+                      ),
+                    ),
+                  ),
+              ],
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _buildEmptyInvitesState() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32.0),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.mail_outline_rounded, size: 54, color: Colors.grey[300]),
+            const SizedBox(height: 16),
+            Text(
+              "No pending invites",
+              style: GoogleFonts.instrumentSans(fontSize: 15, fontWeight: FontWeight.bold, color: Colors.black87),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              "When other students request to join your offered journeys, they will appear here.",
+              textAlign: TextAlign.center,
+              style: GoogleFonts.instrumentSans(color: Colors.grey, fontSize: 12, height: 1.4),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDrawerInviteCard(String requestId, Map<String, dynamic> reqData) {
+    final String rideId = reqData['rideId'] ?? '';
+    final String passengerName = _cleanName(reqData['passengerName'] ?? 'Student');
+    final timeAgo = _getTimeAgo(reqData['timestamp'] ?? reqData['createdAt']);
+
+    return StreamBuilder<DocumentSnapshot>(
+      stream: FirebaseFirestore.instance.collection('rides').doc(rideId).snapshots(),
+      builder: (context, rideSnap) {
+        if (!rideSnap.hasData) {
+          return const SizedBox(
+            height: 100,
+            child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+          );
+        }
+
+        if (!rideSnap.data!.exists) {
+          return Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.red[50],
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Text(
+              "This ride has been cancelled by host.",
+              style: GoogleFonts.instrumentSans(color: Colors.red, fontSize: 12),
+            ),
+          );
+        }
+
+        final rideData = rideSnap.data!.data() as Map<String, dynamic>;
+        final String vehicle = rideData['vehicleType'] ?? 'Auto';
+        
+        final rawTotal = rideData['totalSeats'] ?? rideData['seats'] ?? 4;
+        int totalCapacity = rawTotal is num ? rawTotal.toInt() : (int.tryParse(rawTotal.toString()) ?? 4);
+        final rawAvailable = rideData['availableSeats'] ?? totalCapacity;
+        int currentAvailable = rawAvailable is num ? rawAvailable.toInt() : (int.tryParse(rawAvailable.toString()) ?? totalCapacity);
+        
+        final departureTime = (rideData['departureTime'] as Timestamp).toDate();
+        final countdown = _formatDepartureCountdown(departureTime);
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                CircleAvatar(
+                  radius: 16,
+                  backgroundColor: const Color(0xFFE8EAF6),
+                  child: Text(
+                    passengerName.isNotEmpty ? passengerName.substring(0, 1).toUpperCase() : 'U',
+                    style: GoogleFonts.instrumentSans(
+                      color: const Color(0xFF3F51B5),
+                      fontWeight: FontWeight.bold,
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    passengerName,
+                    style: GoogleFonts.instrumentSans(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 14,
+                      color: Colors.black87,
+                    ),
+                  ),
+                ),
+                Text(
+                  timeAgo,
+                  style: GoogleFonts.instrumentSans(fontSize: 11, color: Colors.grey),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Column(
+                  children: [
+                    const SizedBox(height: 3),
+                    const Icon(Icons.circle_outlined, size: 10, color: Colors.blue),
+                    Container(width: 1.5, height: 18, color: Colors.grey[300]),
+                    const Icon(Icons.location_on, size: 12, color: Colors.redAccent),
+                  ],
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        reqData['pickupPoint'] ?? '',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: GoogleFonts.instrumentSans(
+                          fontSize: 12,
+                          color: Colors.black87,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      Text(
+                        reqData['destination'] ?? '',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: GoogleFonts.instrumentSans(
+                          fontSize: 12,
+                          color: Colors.black87,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    _buildVehicleBadge(vehicle),
+                    const SizedBox(height: 8),
+                    Text(
+                      currentAvailable <= 0 ? "Full" : "$currentAvailable spots left",
+                      style: GoogleFonts.instrumentSans(
+                        color: currentAvailable <= 0 ? Colors.red : Colors.green[700],
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    Text(
+                      countdown,
+                      style: GoogleFonts.instrumentSans(
+                        color: Colors.orange[800],
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.grey[700],
+                      side: BorderSide(color: Colors.grey[300]!),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      padding: const EdgeInsets.symmetric(vertical: 8),
+                    ),
+                    onPressed: () => _processRequestDecision(requestId, rideId, 'declined'),
+                    child: Text(
+                      "Ignore",
+                      style: GoogleFonts.instrumentSans(fontSize: 12, fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.indigo,
+                      foregroundColor: Colors.white,
+                      elevation: 0,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      padding: const EdgeInsets.symmetric(vertical: 8),
+                    ),
+                    onPressed: () {
+                      Navigator.pop(context);
+                      setState(() {
+                        _currentTabNavigationIndex = 2; // Nav to Hub
+                      });
+                    },
+                    child: Text(
+                      "View",
+                      style: GoogleFonts.instrumentSans(fontSize: 12, fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        );
+      },
+    );
   }
 }
 
