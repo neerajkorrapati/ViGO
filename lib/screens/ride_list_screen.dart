@@ -30,14 +30,42 @@ class _RideListScreenState extends State<RideListScreen> {
   String _selectedVehicleFilter = 'All'; 
   DateTime? _selectedDateFilter; 
   int _currentTabNavigationIndex = 0; 
+  int _desktopVisibleRidesCount = 5;
+  String _lastLocationSearchQuery = '';
+  String _lastSelectedVehicleFilter = 'All';
+  DateTime? _lastSelectedDateFilter; 
+
+  late final Stream<QuerySnapshot> _ridesStream;
+  final ScrollController _desktopScrollController = ScrollController();
+  bool _desktopIsLoadingMore = false;
+  bool _showMoreButtonVisible = false;
 
   @override
   void initState() {
     super.initState();
+    _ridesStream = FirebaseFirestore.instance.collection('rides').limit(50).snapshots();
+    _desktopScrollController.addListener(_scrollListener);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _scrollListener();
+    });
+  }
+
+  void _scrollListener() {
+    if (!_desktopScrollController.hasClients) return;
+    final maxScroll = _desktopScrollController.position.maxScrollExtent;
+    final currentScroll = _desktopScrollController.position.pixels;
+    final bool reachedBottom = currentScroll >= maxScroll - 20 || maxScroll == 0;
+    if (reachedBottom != _showMoreButtonVisible) {
+      setState(() {
+        _showMoreButtonVisible = reachedBottom;
+      });
+    }
   }
 
   @override
   void dispose() {
+    _desktopScrollController.removeListener(_scrollListener);
+    _desktopScrollController.dispose();
     _profilePhoneController.dispose();
     _locationSearchController.dispose();
     super.dispose();
@@ -777,8 +805,20 @@ class _RideListScreenState extends State<RideListScreen> {
   Widget _buildExplorePoolsFeed() {
     final bool isDesktop = MediaQuery.of(context).size.width > 800;
 
+    // Detect if filters changed and reset pagination count (DESKTOP ONLY)
+    if (isDesktop && 
+        (_locationSearchQuery != _lastLocationSearchQuery ||
+         _selectedVehicleFilter != _lastSelectedVehicleFilter ||
+         _selectedDateFilter != _lastSelectedDateFilter)) {
+      _desktopVisibleRidesCount = 5;
+      _showMoreButtonVisible = false;
+      _lastLocationSearchQuery = _locationSearchQuery;
+      _lastSelectedVehicleFilter = _selectedVehicleFilter;
+      _lastSelectedDateFilter = _selectedDateFilter;
+    }
+
     return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance.collection('rides').limit(15).snapshots(), // changing limit to 15 users from 30, to reduce server read operations load.
+      stream: _ridesStream,
       builder: (context, snapshot) {
         final bool isLoading = snapshot.connectionState == ConnectionState.waiting;
         final bool hasError = snapshot.hasError;
@@ -839,26 +879,121 @@ class _RideListScreenState extends State<RideListScreen> {
             return bTime.compareTo(aTime); 
           });
 
-          // 🔥 Truncate AFTER sorting to ensure you get the absolute 15 newest rides
-          if (rides.length > 15) {
-            rides = rides.sublist(0, 15);
+          // 🔥 Truncate AFTER sorting to ensure you get the absolute 50 newest rides
+          if (rides.length > 50) {
+            rides = rides.sublist(0, 50);
           }
 
           if (rides.isEmpty) {
             mainContent = _buildEmptyState();
           } else {
-            mainContent = ListView.builder(
-              padding: const EdgeInsets.all(16),
-              itemCount: rides.length,
-              itemBuilder: (context, index) {
-                final doc = rides[index];
-                final ride = Ride.fromFirestore(doc);
-                final data = doc.data() as Map<String, dynamic>;
-                final String vehicle = data['vehicleType'] ?? 'Auto';
-                final String phone = data['driverPhone'] ?? '';
-                return _buildPremiumRideCard(ride, vehicle, phone, doc.id, data);
-              },
-            );
+            if (isDesktop) {
+              final visibleRides = rides.take(_desktopVisibleRidesCount).toList();
+              final hasMore = rides.length > _desktopVisibleRidesCount;
+              final itemCount = visibleRides.length + (_desktopIsLoadingMore ? 5 : 0);
+              
+              mainContent = Stack(
+                children: [
+                  Positioned.fill(
+                    child: ListView.builder(
+                      controller: _desktopScrollController,
+                      padding: EdgeInsets.fromLTRB(16, 16, 16, hasMore ? 80 : 16),
+                      itemCount: itemCount,
+                      itemBuilder: (context, index) {
+                        if (index < visibleRides.length) {
+                          final doc = visibleRides[index];
+                          final ride = Ride.fromFirestore(doc);
+                          final data = doc.data() as Map<String, dynamic>;
+                          final String vehicle = data['vehicleType'] ?? 'Auto';
+                          final String phone = data['driverPhone'] ?? '';
+                          return _buildPremiumRideCard(ride, vehicle, phone, doc.id, data);
+                        } else {
+                          return _buildDesktopSkeletonCard();
+                        }
+                      },
+                    ),
+                  ),
+                  if (hasMore && _showMoreButtonVisible && !_desktopIsLoadingMore)
+                    Positioned(
+                      left: 0,
+                      right: 0,
+                      bottom: 16,
+                      child: Center(
+                        child: InkWell(
+                          onTap: () {
+                            setState(() {
+                              _desktopIsLoadingMore = true;
+                              _showMoreButtonVisible = false;
+                            });
+                            Future.delayed(const Duration(milliseconds: 1500), () {
+                              if (mounted) {
+                                setState(() {
+                                  _desktopVisibleRidesCount += 5;
+                                  _desktopIsLoadingMore = false;
+                                  // The scroll listener will automatically check if we are at the new bottom.
+                                });
+                              }
+                            });
+                          },
+                          borderRadius: BorderRadius.circular(10),
+                          child: Container(
+                            height: 44,
+                            padding: const EdgeInsets.symmetric(horizontal: 24),
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(
+                                color: const Color(0xFF3F51B5),
+                                width: 1.5,
+                              ),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withValues(alpha: 0.05),
+                                  blurRadius: 4,
+                                  offset: const Offset(0, 2),
+                                ),
+                              ],
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Text(
+                                  "Show More",
+                                  style: GoogleFonts.instrumentSans(
+                                    color: const Color(0xFF3F51B5),
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 14,
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                const Icon(
+                                  Icons.keyboard_arrow_down_rounded,
+                                  color: Color(0xFF3F51B5),
+                                  size: 18,
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              );
+            } else {
+              mainContent = ListView.builder(
+                padding: const EdgeInsets.all(16),
+                itemCount: rides.length,
+                itemBuilder: (context, index) {
+                  final doc = rides[index];
+                  final ride = Ride.fromFirestore(doc);
+                  final data = doc.data() as Map<String, dynamic>;
+                  final String vehicle = data['vehicleType'] ?? 'Auto';
+                  final String phone = data['driverPhone'] ?? '';
+                  return _buildPremiumRideCard(ride, vehicle, phone, doc.id, data);
+                },
+              );
+            }
           }
         }
 
@@ -880,7 +1015,7 @@ class _RideListScreenState extends State<RideListScreen> {
                   decoration: decoration,
                   child: Center(
                     child: SizedBox(
-                      width: 580,
+                      width: 680,
                       child: mainContent,
                     ),
                   ),
@@ -2268,13 +2403,13 @@ class _RideListScreenState extends State<RideListScreen> {
                       crossAxisAlignment: CrossAxisAlignment.center,
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        _buildLocationDetailColumn(pickupCity, pickupAbbr, departureTimeStr, crossAxisAlignment: CrossAxisAlignment.start),
+                        _buildLocationDetailColumn(pickupCity, pickupAbbr, departureTimeStr, crossAxisAlignment: CrossAxisAlignment.start, isDesktop: true),
                         const SizedBox(width: 12),
                         Expanded(
                           child: _buildRouteTrajectoryWidget(vehicle, travelDuration),
                         ),
                         const SizedBox(width: 12),
-                        _buildLocationDetailColumn(destCity, destAbbr, arrivalTimeStr, crossAxisAlignment: CrossAxisAlignment.end),
+                        _buildLocationDetailColumn(destCity, destAbbr, arrivalTimeStr, crossAxisAlignment: CrossAxisAlignment.end, isDesktop: true),
                       ],
                     ),
                     const SizedBox(height: 16),
@@ -2288,28 +2423,31 @@ class _RideListScreenState extends State<RideListScreen> {
                             const SizedBox(width: 6),
                             Text(
                               "$joinedCount joined",
-                              style: GoogleFonts.instrumentSans(
-                                color: Colors.indigo[800],
-                                fontSize: 13,
-                                fontWeight: FontWeight.bold,
+                              style: const TextStyle(
+                                fontFamily: 'Times New Roman',
+                                color: Color(0xFF3F51B5),
+                                fontSize: 16,
+                                fontWeight: FontWeight.w400,
                               ),
                             ),
                           ],
                         ),
                         Text(
                           currentAvailable <= 0 ? "Full" : "$currentAvailable spots left",
-                          style: GoogleFonts.instrumentSans(
+                          style: TextStyle(
+                            fontFamily: 'Times New Roman',
                             color: currentAvailable <= 0 ? Colors.red : Colors.green[700],
-                            fontSize: 13,
-                            fontWeight: FontWeight.bold,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w400,
                           ),
                         ),
                         Text(
                           _formatDepartureCountdown(ride.departureTime),
-                          style: GoogleFonts.instrumentSans(
+                          style: TextStyle(
+                            fontFamily: 'Times New Roman',
                             color: Colors.orange[800],
-                            fontSize: 13,
-                            fontWeight: FontWeight.bold,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w400,
                           ),
                         ),
                       ],
@@ -2564,37 +2702,38 @@ class _RideListScreenState extends State<RideListScreen> {
     );
   }
 
-  Widget _buildLocationDetailColumn(String city, String abbreviation, String dateTime, {required CrossAxisAlignment crossAxisAlignment}) {
+  Widget _buildLocationDetailColumn(String city, String abbreviation, String dateTime, {required CrossAxisAlignment crossAxisAlignment, bool isDesktop = false}) {
+    final fontWeight = isDesktop ? FontWeight.w400 : FontWeight.w300;
     return Column(
       crossAxisAlignment: crossAxisAlignment,
       mainAxisSize: MainAxisSize.min,
       children: [
         Text(
           city,
-          style: const TextStyle(
+          style: TextStyle(
             fontFamily: 'Times New Roman',
             fontSize: 16,
-            fontWeight: FontWeight.w300, // thin
+            fontWeight: fontWeight,
             color: Colors.black54,
           ),
         ),
         const SizedBox(height: 2),
         Text(
           abbreviation,
-          style: const TextStyle(
+          style: TextStyle(
             fontFamily: 'Times New Roman',
             fontSize: 16,
-            fontWeight: FontWeight.w300, // thin
+            fontWeight: isDesktop ? FontWeight.bold : FontWeight.w300,
             color: Colors.black87,
           ),
         ),
         const SizedBox(height: 2),
         Text(
           dateTime,
-          style: const TextStyle(
+          style: TextStyle(
             fontFamily: 'Times New Roman',
             fontSize: 16,
-            fontWeight: FontWeight.w300, // thin
+            fontWeight: fontWeight,
             color: Colors.black54,
           ),
         ),
@@ -3278,6 +3417,138 @@ class _RideListScreenState extends State<RideListScreen> {
           ],
         );
       },
+    );
+  }
+
+  Widget _buildDesktopSkeletonCard() {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      child: TicketCard(
+        cutPosition: 64.0,
+        cutRadius: 10.0,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // Header Section Skeleton
+            Container(
+              height: 64,
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              alignment: Alignment.center,
+              child: Row(
+                children: [
+                  // Avatar Skeleton
+                  Container(
+                    width: 32,
+                    height: 32,
+                    decoration: BoxDecoration(
+                      color: Colors.grey[200],
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  // Name Skeleton
+                  Container(
+                    width: 120,
+                    height: 16,
+                    decoration: BoxDecoration(
+                      color: Colors.grey[200],
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                  ),
+                  const Spacer(),
+                  // Vehicle Badge Skeleton
+                  Container(
+                    width: 60,
+                    height: 20,
+                    decoration: BoxDecoration(
+                      color: Colors.grey[200],
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            
+            // Body Section Skeleton
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      // Pickup Location Skeleton
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Container(width: 80, height: 14, color: Colors.grey[200]),
+                          const SizedBox(height: 6),
+                          Container(width: 60, height: 16, color: Colors.grey[200]),
+                          const SizedBox(height: 6),
+                          Container(width: 100, height: 12, color: Colors.grey[200]),
+                        ],
+                      ),
+                      // Trajectory Skeleton
+                      Container(
+                        width: 120,
+                        height: 24,
+                        color: Colors.grey[100],
+                      ),
+                      // Destination Location Skeleton
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Container(width: 80, height: 14, color: Colors.grey[200]),
+                          const SizedBox(height: 6),
+                          Container(width: 60, height: 16, color: Colors.grey[200]),
+                          const SizedBox(height: 6),
+                          Container(width: 100, height: 12, color: Colors.grey[200]),
+                        ],
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 20),
+                  // Metadata Row Skeleton
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Container(width: 90, height: 14, color: Colors.grey[200]),
+                      Container(width: 90, height: 14, color: Colors.grey[200]),
+                      Container(width: 90, height: 14, color: Colors.grey[200]),
+                    ],
+                  ),
+                  const SizedBox(height: 20),
+                  // Buttons Skeleton
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Container(
+                          height: 38,
+                          decoration: BoxDecoration(
+                            color: Colors.grey[200],
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Container(
+                          height: 38,
+                          decoration: BoxDecoration(
+                            color: Colors.grey[200],
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
