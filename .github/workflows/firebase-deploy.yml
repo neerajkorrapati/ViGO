@@ -1,4 +1,4 @@
-name: Firebase Deploy
+name: Firebase Deploy (Flutter Web)
 
 on:
   push:
@@ -12,18 +12,18 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v3
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v3
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
         with:
-          node-version: '18'
+          flutter-version: '3.22.0'   # use your Flutter version
 
       - name: Install dependencies
-        run: npm install
+        run: flutter pub get
 
-      - name: Build project
-        run: npm run build   # adjust if your build script differs
+      - name: Build Flutter web
+        run: flutter build web --release
 
-      - name: Deploy to Firebase
+      - name: Deploy to Firebase Hosting
         uses: w9jds/firebase-action@v2.2.0
         with:
           args: deploy --only hosting
