@@ -2306,7 +2306,7 @@ class _RideListScreenState extends State<RideListScreen> {
     }
   }
 
-  Widget _buildDesktopCard({
+ Widget _buildDesktopCard({
     required Ride ride,
     required String vehicle,
     required String phone,
@@ -2362,18 +2362,38 @@ class _RideListScreenState extends State<RideListScreen> {
                       ),
                     ),
                     const SizedBox(width: 10),
-                    Text(
-                      hostName,
-                      style: GoogleFonts.inriaSans(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 16,
-                        color: Colors.black87,
-                      ),
+                    Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Text(
+                              hostName,
+                              style: GoogleFonts.inriaSans(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 16,
+                                color: Colors.black87,
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            const Icon(Icons.check_circle, color: Colors.green, size: 16),
+                          ],
+                        ),
+                        const SizedBox(height: 2),
+                        // 🕒 Subtle time ago indicator
+                        Text(
+                          _getTimeAgo(rawData['timestamp'] ?? rawData['createdAt']),
+                          style: GoogleFonts.instrumentSans(
+                            color: Colors.black38,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ],
                     ),
-                    const SizedBox(width: 6),
-                    const Icon(Icons.check_circle, color: Colors.green, size: 16),
                     if (hasNotes) ...[
-                      const SizedBox(width: 6),
+                      const SizedBox(width: 8),
                       InkWell(
                         onTap: () => _showNotesDialog(docId, rawData, isMyOwnRide),
                         child: const Icon(Icons.speaker_notes, size: 14, color: Colors.blue),
@@ -2432,17 +2452,17 @@ class _RideListScreenState extends State<RideListScreen> {
                           ],
                         ),
                         Text(
-  currentAvailable <= 0 ? "Full" : "$currentAvailable spots left",
-  style: GoogleFonts.instrumentSans(
-    color: currentAvailable <= 0 ? Colors.redAccent : Colors.green[700],
-    fontSize: 13,
-    fontWeight: FontWeight.w600,
-  ),
-),
+                          currentAvailable <= 0 ? "Full" : "$currentAvailable spots left",
+                          style: GoogleFonts.instrumentSans(
+                            color: currentAvailable <= 0 ? Colors.redAccent : Colors.green[700],
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
                         Text(
                           _formatDepartureCountdown(ride.departureTime),
                           style: GoogleFonts.instrumentSans(
-                            color: Colors.amber[900], // Professional burnt amber palette tone
+                            color: Colors.amber[900],
                             fontSize: 13,
                             fontWeight: FontWeight.w600,
                           ),
@@ -2503,7 +2523,7 @@ class _RideListScreenState extends State<RideListScreen> {
     );
   }
 
-  Widget _buildMobileCard({
+ Widget _buildMobileCard({
     required Ride ride,
     required String vehicle,
     required String phone,
@@ -2559,18 +2579,38 @@ class _RideListScreenState extends State<RideListScreen> {
                       ),
                     ),
                     const SizedBox(width: 8),
-                    Text(
-                      hostName,
-                      style: GoogleFonts.inriaSans(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 13,
-                        color: Colors.black87,
-                      ),
+                    Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Text(
+                              hostName,
+                              style: GoogleFonts.inriaSans(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 13,
+                                color: Colors.black87,
+                              ),
+                            ),
+                            const SizedBox(width: 4),
+                            const Icon(Icons.check_circle, color: Colors.green, size: 14),
+                          ],
+                        ),
+                        const SizedBox(height: 1),
+                        // 🕒 Subtle time ago indicator
+                        Text(
+                          _getTimeAgo(rawData['timestamp'] ?? rawData['createdAt']),
+                          style: GoogleFonts.instrumentSans(
+                            color: Colors.black38,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ],
                     ),
-                    const SizedBox(width: 4),
-                    const Icon(Icons.check_circle, color: Colors.green, size: 14),
                     if (hasNotes) ...[
-                      const SizedBox(width: 4),
+                      const SizedBox(width: 6),
                       InkWell(
                         onTap: () => _showNotesDialog(docId, rawData, isMyOwnRide),
                         child: const Icon(Icons.speaker_notes, size: 12, color: Colors.blue),
@@ -2622,19 +2662,19 @@ class _RideListScreenState extends State<RideListScreen> {
                               style: GoogleFonts.instrumentSans(
                                 color: Colors.indigo[800],
                                 fontSize: 11,
-                                fontWeight: FontWeight.w600, // Balanced dynamic padding weights
+                                fontWeight: FontWeight.w600,
                               ),
                             ),
                           ],
                         ),
                         Text(
-                          currentAvailable <= 0 ? "Full" : "$currentAvailable spots left",
-                          style: GoogleFonts.instrumentSans(
-                            color: currentAvailable <= 0 ? Colors.redAccent : Colors.green[700],
-                            fontSize: 11,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
+  currentAvailable <= 0 ? "Full" : "$currentAvailable spots left",
+  style: GoogleFonts.instrumentSans(
+    color: currentAvailable <= 0 ? Colors.redAccent : Colors.green[700],
+    fontSize: 11,
+    fontWeight: FontWeight.w600,
+  ),
+),
                         Text(
                           _formatDepartureCountdown(ride.departureTime),
                           style: GoogleFonts.instrumentSans(
