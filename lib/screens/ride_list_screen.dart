@@ -2423,31 +2423,28 @@ class _RideListScreenState extends State<RideListScreen> {
                             const SizedBox(width: 6),
                             Text(
                               "$joinedCount joined",
-                              style: const TextStyle(
-                                fontFamily: 'Times New Roman',
-                                color: Color(0xFF3F51B5),
-                                fontSize: 16,
-                                fontWeight: FontWeight.w400,
+                              style: GoogleFonts.instrumentSans(
+                                color: const Color(0xFF3F51B5),
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
                               ),
                             ),
                           ],
                         ),
                         Text(
-                          currentAvailable <= 0 ? "Full" : "$currentAvailable spots left",
-                          style: TextStyle(
-                            fontFamily: 'Times New Roman',
-                            color: currentAvailable <= 0 ? Colors.red : Colors.green[700],
-                            fontSize: 16,
-                            fontWeight: FontWeight.w400,
-                          ),
-                        ),
+  currentAvailable <= 0 ? "Full" : "$currentAvailable spots left",
+  style: GoogleFonts.instrumentSans(
+    color: currentAvailable <= 0 ? Colors.redAccent : Colors.green[700],
+    fontSize: 13,
+    fontWeight: FontWeight.w600,
+  ),
+),
                         Text(
                           _formatDepartureCountdown(ride.departureTime),
-                          style: TextStyle(
-                            fontFamily: 'Times New Roman',
-                            color: Colors.orange[800],
-                            fontSize: 16,
-                            fontWeight: FontWeight.w400,
+                          style: GoogleFonts.instrumentSans(
+                            color: Colors.amber[900], // Professional burnt amber palette tone
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
                           ),
                         ),
                       ],
@@ -2625,7 +2622,7 @@ class _RideListScreenState extends State<RideListScreen> {
                               style: GoogleFonts.instrumentSans(
                                 color: Colors.indigo[800],
                                 fontSize: 11,
-                                fontWeight: FontWeight.bold,
+                                fontWeight: FontWeight.w600, // Balanced dynamic padding weights
                               ),
                             ),
                           ],
@@ -2633,17 +2630,17 @@ class _RideListScreenState extends State<RideListScreen> {
                         Text(
                           currentAvailable <= 0 ? "Full" : "$currentAvailable spots left",
                           style: GoogleFonts.instrumentSans(
-                            color: currentAvailable <= 0 ? Colors.red : Colors.green[700],
+                            color: currentAvailable <= 0 ? Colors.redAccent : Colors.green[700],
                             fontSize: 11,
-                            fontWeight: FontWeight.bold,
+                            fontWeight: FontWeight.w600,
                           ),
                         ),
                         Text(
                           _formatDepartureCountdown(ride.departureTime),
                           style: GoogleFonts.instrumentSans(
-                            color: Colors.orange[800],
+                            color: Colors.amber[900],
                             fontSize: 11,
-                            fontWeight: FontWeight.bold,
+                            fontWeight: FontWeight.w600,
                           ),
                         ),
                       ],
@@ -2703,7 +2700,6 @@ class _RideListScreenState extends State<RideListScreen> {
   }
 
   Widget _buildLocationDetailColumn(String city, String abbreviation, String dateTime, {required CrossAxisAlignment crossAxisAlignment, bool isDesktop = false}) {
-    final fontWeight = isDesktop ? FontWeight.w400 : FontWeight.w300;
     return Column(
       crossAxisAlignment: crossAxisAlignment,
       mainAxisSize: MainAxisSize.min,
@@ -2712,29 +2708,30 @@ class _RideListScreenState extends State<RideListScreen> {
           city,
           style: TextStyle(
             fontFamily: 'Times New Roman',
-            fontSize: 16,
-            fontWeight: fontWeight,
-            color: Colors.black54,
+            fontSize: 13,
+            fontWeight: FontWeight.w500,
+            color: Colors.blueGrey[600], // Premium high-contrast slate color
           ),
         ),
-        const SizedBox(height: 2),
+        const SizedBox(height: 3),
         Text(
           abbreviation,
-          style: TextStyle(
+          style: const TextStyle(
             fontFamily: 'Times New Roman',
-            fontSize: 16,
-            fontWeight: isDesktop ? FontWeight.bold : FontWeight.w300,
+            fontSize: 22, // Enhanced size hierarchy for station/airport abbreviations
+            fontWeight: FontWeight.bold,
             color: Colors.black87,
+            letterSpacing: 0.5,
           ),
         ),
-        const SizedBox(height: 2),
+        const SizedBox(height: 3),
         Text(
           dateTime,
           style: TextStyle(
             fontFamily: 'Times New Roman',
-            fontSize: 16,
-            fontWeight: fontWeight,
-            color: Colors.black54,
+            fontSize: 12,
+            fontWeight: FontWeight.w500,
+            color: Colors.grey[700], // Highly legible timestamp mapping
           ),
         ),
       ],
