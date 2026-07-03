@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import '../services/toast_service.dart';
 
 class CreateRideScreen extends StatefulWidget {
   const CreateRideScreen({super.key});
@@ -102,23 +103,17 @@ class _CreateRideScreenState extends State<CreateRideScreen> {
       });
 
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Ride route published live to campus feed!"), backgroundColor: Colors.green),
-      );
+      ToastService.show(context, "Ride route published live to campus feed!");
       Navigator.pop(context);
     } catch (e) {
       setState(() => _isLoading = false);
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Submission failed: $e"), backgroundColor: Colors.redAccent),
-      );
+      ToastService.show(context, "Submission failed: $e", isWarning: true);
     }
   }
 
   void _showWarningSnackBar(String alertMsg) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(alertMsg), backgroundColor: Colors.orangeAccent, behavior: SnackBarBehavior.floating),
-    );
+    ToastService.show(context, alertMsg, isWarning: true);
   }
 
   @override

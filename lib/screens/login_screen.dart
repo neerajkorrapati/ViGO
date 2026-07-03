@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../services/auth_service.dart';
+import '../services/toast_service.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -19,13 +20,7 @@ class _LoginScreenState extends State<LoginScreen> {
       // AuthGate will automatically detect the login and navigate.
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(e.toString().replaceAll('Exception: ', '')),
-            backgroundColor: Colors.red,
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
+        ToastService.show(context, e.toString(), isWarning: true);
       }
     } finally {
       if (mounted) setState(() => _isLoading = false);
@@ -47,7 +42,7 @@ class _LoginScreenState extends State<LoginScreen> {
               Container(
                 padding: const EdgeInsets.all(24),
                 decoration: BoxDecoration(
-                  color: const Color(0xFF1A53FF).withOpacity(0.1),
+                  color: const Color(0xFF1A53FF).withValues(alpha: 0.1),
                   shape: BoxShape.circle,
                 ),
                 child: const Icon(Icons.directions_car, size: 80, color: Color(0xFF1A53FF)),

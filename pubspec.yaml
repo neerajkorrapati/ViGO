@@ -37,7 +37,11 @@ dependencies:
   flutter_riverpod: ^2.5.1
   url_launcher: ^6.3.0
   google_sign_in: ^6.2.1
-  http: ^0.13.6
+  http: ^1.1.0
+  flutter_svg: ^2.0.10
+  google_fonts: ^8.1.0
+  web: ^0.5.1
+  material_design_icons_flutter: ^7.0.7296
 
 dev_dependencies:
   flutter_test:
@@ -60,6 +64,11 @@ flutter:
   # included with your application, so that you can use the icons in
   # the material Icons class.
   uses-material-design: true
+  assets:
+    - web/assets/cabConvertible.svg
+    - web/assets/rideListBG.jpeg
+    - web/assets/404_desktop.jpg
+    - web/assets/404_mobile.png
 
   # To add assets to your application, add an assets section, like this:
   # assets:

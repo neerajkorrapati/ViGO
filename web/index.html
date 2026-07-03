@@ -7,16 +7,29 @@
   <meta content="IE=Edge" name="X-UA-Compatible">
   
   <title>ViGo - VIT Carpool & Student Ride Share Platform</title>
-  <meta name="description" content="ViGo is the premier student carpool platform for VIT Vellore. Split auto and cab rides, manage student pools, and share travel costs safely with verified students.">
-  <meta name="keywords" content="vit carpool, carpool vit, vit vellore carpooling, student ride share vit, vigo vit, vigo carpool, vit cabshare, vit cabs, vit ride, vit share cab,vit pooling, unipool , UniPool">
+  
+  <meta name="description" content="ViGo is the premier student carpool platform for VIT Vellore. Split auto and cab rides, manage student pools, and share travel costs safely with verified students to Katpadi, Chennai, and Bangalore.">
+  <meta name="keywords" content="ViGo, ViGo carpool, vit carpool, carpool vit, vit vellore carpooling, student ride share vit, vigo vit, vit cabshare, vit cabs, vit ride, vit share cab, vit pooling, unipool, UniPool, katpadi station share auto, chennai airport to vit carpool, split fare vit vellore, vellore institute of technology ride share, student transport vit">
 
   <script type="application/ld+json">
   {
     "@context": "https://schema.org",
-    "@type": "WebSite",
+    "@type": "WebApplication",
     "name": "ViGo",
-    "alternateName": ["ViGo VIT", "VIT Carpool", "Carpool VIT"],
-    "url": "https://vigovit.web.app/"
+    "alternateName": ["ViGo Carpool", "ViGo VIT", "VIT Carpool", "Carpool VIT", "ViGo Ride Share"],
+    "url": "https://vigovit.web.app/",
+    "applicationCategory": "TravelApplication",
+    "operatingSystem": "Web, Android, iOS",
+    "description": "Premium student carpool and ride-sharing platform for VIT Vellore. Split cab and auto fares safely with verified students.",
+    "offers": {
+      "@type": "Offer",
+      "price": "0",
+      "priceCurrency": "INR"
+    },
+    "author": {
+      "@type": "Organization",
+      "name": "ViGo Team"
+    }
   }
   </script>
 
@@ -49,32 +62,79 @@
       margin: 0;
       padding: 0;
       overflow: hidden;
-      background-color: #F8F9FA;
+      background-color: #FFFFFF;
     }
-    /* Forces mobile engines to pass touchscreen drag values directly to the active canvas instantly */
     flutter-view {
       touch-action: pan-x pan-y !important;
       -webkit-overflow-scrolling: touch !important;
     }
+    .fullscreen-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      background-color: #FFFFFF;
+      overflow: hidden;
+    }
+    #loading-overlay {
+      z-index: 99998;
+      display: flex;
+      border: none !important;
+      outline: none !important;
+      box-shadow: none !important;
+    }
+    #loading-gif {
+      width: 600px;
+      height: 600px;
+      object-fit: contain;
+      border: none !important;
+      outline: none !important;
+      box-shadow: none !important;
+    }
   </style>
+  <script>
+    window.addEventListener('flutter-first-frame', function() {
+      var loadingOverlay = document.getElementById('loading-overlay');
+      if (loadingOverlay) {
+        loadingOverlay.remove();
+      }
+    });
+  </script>
 </head>
 <body>
+  <div id="loading-overlay" class="fullscreen-overlay">
+    <img id="loading-gif" src="assets/loadScreen.gif" alt="Loading...">
+  </div>
 
   <div id="seo-fallback-content" style="position: absolute; left: -9999px; top: -9999px; width: 1px; height: 1px; overflow: hidden;">
-    <h1>VIT Carpool</h1>
+    <h1>ViGo Carpool - VIT Vellore</h1>
     <h2>Carpool VIT - Verified Student Ride Sharing Platform</h2>
-    <h3>ViGo Campus Rideshare Network for VIT Vellore</h3>
+    <h3>ViGo Campus Rideshare Network for Vellore Institute of Technology</h3>
     <p>
       ViGo is an innovative vit carpooling application and campus ride share solution specifically engineered to solve transit challenges faced by students at VIT Vellore. 
-      The platform offers streamlined, real-time carpool party allocation for autos and cabs heading to or from the campus, Katpadi railway station, and nearby airports.
+      The platform offers streamlined, real-time carpool party allocation for autos and cabs. Find a ride, share the fare, and travel safely.
     </p>
+    
+    <h3>Popular VIT Carpool Routes on ViGo:</h3>
+    <ul>
+      <li>VIT Vellore to Katpadi Railway Station Share Auto</li>
+      <li>Katpadi Station to VIT Campus Cab Split</li>
+      <li>VIT Vellore to Chennai Airport Carpool</li>
+      <li>Bangalore to VIT Vellore Ride Share</li>
+      <li>VIT Campus to Vellore Bus Stand (New Bus Stand) Pooling</li>
+    </ul>
+
     <p>
       If you are looking to carpool at VIT, ViGo enables students to securely connect, share travel costs, split cab bookings, and coordinate auto rides efficiently. 
-      Featuring automated, secure verification and seamless integration via native custom WhatsApp group communication links.
+      Featuring automated, secure verification using VIT email IDs and seamless integration via native custom WhatsApp group communication links. The best alternative to UniPool for VITians.
     </p>
-    <p>Keywords: vit carpool, carpool vit, vit vellore carpooling, student ride share vit, vigo vit, vigo carpool, vit cab split, vit auto share</p>
+    <p>Keywords: vit carpool, carpool vit, vit vellore carpooling, student ride share vit, vigo vit, vigo carpool, vit cab split, vit auto share, vit vellore cabshare, katpadi share auto</p>
   </div>
 
   <script src="flutter_bootstrap.js" async></script>
 </body>
-</html> 
+</html>

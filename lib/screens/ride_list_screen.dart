@@ -2,9 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:url_launcher/url_launcher.dart'; 
-import 'dart:html' as html; 
+import 'package:web/web.dart' as web; 
+import 'package:flutter_svg/flutter_svg.dart';
 import '../models/ride_model.dart';
 import '../services/auth_service.dart';
+import '../services/toast_service.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'onboarding_screen.dart';
 import 'create_ride_screen.dart';
 
@@ -16,6 +19,7 @@ class RideListScreen extends StatefulWidget {
 }
 
 class _RideListScreenState extends State<RideListScreen> {
+  final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
   final _authService = AuthService();
   final TextEditingController _profilePhoneController = TextEditingController();
   final TextEditingController _locationSearchController = TextEditingController();
@@ -26,21 +30,42 @@ class _RideListScreenState extends State<RideListScreen> {
   String _selectedVehicleFilter = 'All'; 
   DateTime? _selectedDateFilter; 
   int _currentTabNavigationIndex = 0; 
-  // 🔥 ADDED: This controls how many rides are drawn on the screen initially
-  int _currentDisplayLimit = 10;
-// 🔥 1. Add this variable to hold the connection open
-  late Stream<QuerySnapshot> _ridesStream;
+  int _desktopVisibleRidesCount = 5;
+  String _lastLocationSearchQuery = '';
+  String _lastSelectedVehicleFilter = 'All';
+  DateTime? _lastSelectedDateFilter; 
+
+  late final Stream<QuerySnapshot> _ridesStream;
+  final ScrollController _desktopScrollController = ScrollController();
+  bool _desktopIsLoadingMore = false;
+  bool _showMoreButtonVisible = false;
+
   @override
   void initState() {
     super.initState();
-    // DISABLE 
-    //_cleanUpPastRides();   : cleaning up the sweeper bot to reduce read operations on firebase servers.
-  // 🔥 2. Initialize the stream exactly ONCE when the app boots up
-    _ridesStream = FirebaseFirestore.instance.collection('rides').snapshots();
+    _ridesStream = FirebaseFirestore.instance.collection('rides').limit(50).snapshots();
+    _desktopScrollController.addListener(_scrollListener);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _scrollListener();
+    });
+  }
+
+  void _scrollListener() {
+    if (!_desktopScrollController.hasClients) return;
+    final maxScroll = _desktopScrollController.position.maxScrollExtent;
+    final currentScroll = _desktopScrollController.position.pixels;
+    final bool reachedBottom = currentScroll >= maxScroll - 20 || maxScroll == 0;
+    if (reachedBottom != _showMoreButtonVisible) {
+      setState(() {
+        _showMoreButtonVisible = reachedBottom;
+      });
+    }
   }
 
   @override
   void dispose() {
+    _desktopScrollController.removeListener(_scrollListener);
+    _desktopScrollController.dispose();
     _profilePhoneController.dispose();
     _locationSearchController.dispose();
     super.dispose();
@@ -49,37 +74,6 @@ class _RideListScreenState extends State<RideListScreen> {
   // Regex filter to automatically scrub VIT Registration Numbers from display names
   String _cleanName(String rawName) {
     return rawName.replaceAll(RegExp(r'\b\d{2}[a-zA-Z]{3}\d{4}\b', caseSensitive: false), '').trim();
-  }
-
-  Future<void> _cleanUpPastRides() async {
-    try {
-      final now = Timestamp.now();
-      final batch = FirebaseFirestore.instance.batch();
-
-      final expiredSnap = await FirebaseFirestore.instance
-          .collection('rides')
-          .where('departureTime', isLessThan: now)
-          .get();
-      
-      for (var doc in expiredSnap.docs) {
-        batch.delete(doc.reference);
-      }
-
-      final expiredDeclinedRequestsSnap = await FirebaseFirestore.instance
-          .collection('requests')
-          .where('status', isEqualTo: 'declined')
-          .where('departureTime', isLessThan: now)
-          .get();
-
-      for (var doc in expiredDeclinedRequestsSnap.docs) {
-        batch.delete(doc.reference);
-      }
-
-      await batch.commit();
-      debugPrint("ViGo Housekeeper: Cleaned up ${expiredSnap.docs.length} expired rides and ${expiredDeclinedRequestsSnap.docs.length} expired declined requests.");
-    } catch (e) {
-      debugPrint("ViGo Housekeeper Error: $e");
-    }
   }
 
   void _handleAction(VoidCallback onAuthSuccess) async {
@@ -98,9 +92,7 @@ class _RideListScreenState extends State<RideListScreen> {
         }
       } catch (e) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text("Profile sync error: $e"), backgroundColor: Colors.redAccent),
-          );
+          ToastService.show(context, "Profile sync error: $e", isWarning: true);
         }
       }
     }
@@ -251,11 +243,14 @@ class _RideListScreenState extends State<RideListScreen> {
       if (decisionStatus == 'accepted') {
         final rideSnap = await rideRef.get();
         if (!rideSnap.exists) { _showSnackBar("Error: Ride not found."); return; }
-        final data = rideSnap.data() as Map<String, dynamic>? ?? {};
+        final data = rideSnap.data() ?? {};
         var rawSeats = data['availableSeats'] ?? data['totalSeats'] ?? data['seats'];
         int seatsLeft = 0;
-        if (rawSeats is num) seatsLeft = rawSeats.toInt();
-        else if (rawSeats is String) seatsLeft = int.tryParse(rawSeats) ?? 0;
+        if (rawSeats is num) {
+          seatsLeft = rawSeats.toInt();
+        } else if (rawSeats is String) {
+          seatsLeft = int.tryParse(rawSeats) ?? 0;
+        }
         if (seatsLeft <= 0) { _showSnackBar("Cannot accept. Vehicle capacity is entirely full."); return; }
         await requestRef.update({'status': 'accepted'});
         await rideRef.update({'availableSeats': seatsLeft - 1});
@@ -341,8 +336,11 @@ class _RideListScreenState extends State<RideListScreen> {
                   final data = rideSnap.data() as Map<String, dynamic>;
                   var rawSeats = data['availableSeats'] ?? data['totalSeats'] ?? data['seats'];
                   int currentSeats = 0;
-                  if (rawSeats is num) currentSeats = rawSeats.toInt();
-                  else if (rawSeats is String) currentSeats = int.tryParse(rawSeats) ?? 0;
+                  if (rawSeats is num) {
+                    currentSeats = rawSeats.toInt();
+                  } else if (rawSeats is String) {
+                    currentSeats = int.tryParse(rawSeats) ?? 0;
+                  }
                   
                   batch.update(rideRef, {'availableSeats': currentSeats + 1});
                 }
@@ -415,8 +413,11 @@ class _RideListScreenState extends State<RideListScreen> {
                       if (!ctx.mounted) return;
                       Navigator.pop(ctx); 
                       if (!mounted) return;
-                      if (isDone) onAuthSuccess(); 
-                      else Navigator.push(context, MaterialPageRoute(builder: (_) => const OnboardingScreen()));
+                      if (isDone) {
+                        onAuthSuccess();
+                      } else {
+                        Navigator.push(context, MaterialPageRoute(builder: (_) => const OnboardingScreen()));
+                      }
                     }
                   } catch (e) {
                     if (!mounted) return;
@@ -592,7 +593,7 @@ class _RideListScreenState extends State<RideListScreen> {
         return ListTile(
           contentPadding: EdgeInsets.zero,
           leading: CircleAvatar(
-            backgroundColor: (occ['color'] as Color).withOpacity(0.1),
+            backgroundColor: (occ['color'] as Color).withValues(alpha: 0.1),
             child: Icon(occ['role'] == 'Host' ? Icons.star : Icons.person, color: occ['color'], size: 18),
           ),
           title: Text(isMe ? "${occ['name']} (You)" : occ['name'], style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
@@ -609,7 +610,11 @@ class _RideListScreenState extends State<RideListScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final bool isDesktop = MediaQuery.of(context).size.width > 800;
     return Scaffold(
+      key: _scaffoldKey,
+      endDrawer: _buildRequestsDrawer(),
+      drawerScrimColor: Colors.black.withValues(alpha: 0.35),
       backgroundColor: const Color(0xFFF8F9FA), 
       appBar: AppBar(
         backgroundColor: Colors.white,
@@ -621,13 +626,13 @@ class _RideListScreenState extends State<RideListScreen> {
           child: InkWell(
             onTap: () => setState(() => _currentTabNavigationIndex = 0),
             borderRadius: BorderRadius.circular(8),
-            splashColor: Colors.indigo.withOpacity(0.1),
+            splashColor: Colors.indigo.withValues(alpha: 0.1),
             highlightColor: Colors.transparent,
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
               child: Image.network(
                 "/vigo_full_logo.jpeg", 
-                height: 35, 
+                height: 50, 
                 fit: BoxFit.contain,
               ),
             ),
@@ -636,13 +641,58 @@ class _RideListScreenState extends State<RideListScreen> {
         actions: [
           StreamBuilder<User?>(
             stream: _authService.user,
-            builder: (context, snapshot) {
-              if (snapshot.hasData) {
-                return IconButton(
-                  icon: const Icon(Icons.logout, color: Colors.redAccent),
-                  onPressed: () async {
-                    await _authService.signOut();
-                    html.window.location.reload(); 
+            builder: (context, authSnap) {
+              final user = authSnap.data;
+              if (user != null) {
+                return StreamBuilder<QuerySnapshot>(
+                  stream: FirebaseFirestore.instance
+                      .collection('requests')
+                      .where('driverId', isEqualTo: user.uid)
+                      .where('status', isEqualTo: 'pending')
+                      .snapshots(),
+                  builder: (context, reqSnap) {
+                    int pendingCount = 0;
+                    if (reqSnap.hasData) {
+                      pendingCount = reqSnap.data!.docs.length;
+                    }
+                    
+                    return Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        IconButton(
+                          icon: Badge(
+                            isLabelVisible: pendingCount > 0,
+                            backgroundColor: Colors.redAccent,
+                            label: Text(
+                              pendingCount.toString(),
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            child: const Icon(
+                              Icons.notifications_active,
+                              color: Color(0xFFD49E35), // Golden beige bell icon
+                              size: 24,
+                            ),
+                          ),
+                          onPressed: () {
+                            _scaffoldKey.currentState?.openEndDrawer();
+                          },
+                        ),
+                        const SizedBox(width: 4),
+                        IconButton(
+                          icon: const Icon(Icons.logout, color: Colors.redAccent),
+                          tooltip: 'Logout',
+                          onPressed: () async {
+                            await _authService.signOut();
+                            web.window.location.reload(); 
+                          },
+                        ),
+                        const SizedBox(width: 8),
+                      ],
+                    );
                   },
                 );
               }
@@ -657,12 +707,11 @@ class _RideListScreenState extends State<RideListScreen> {
               ? _buildMyRidesScreen() 
               : _buildDashboardHub(),
       
-      floatingActionButton: _currentTabNavigationIndex == 0
-          ? FloatingActionButton.extended(
+      floatingActionButton: (_currentTabNavigationIndex == 0 && !isDesktop)
+          ? FloatingActionButton(
               onPressed: () => _handleAction(() { Navigator.push(context, MaterialPageRoute(builder: (_) => const CreateRideScreen())); }),
               backgroundColor: Colors.indigo,
-              label: const Text("Offer a Ride", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
-              icon: const Icon(Icons.add, color: Colors.white),
+              child: const Icon(Icons.add, color: Colors.white),
             )
           : null,
           
@@ -752,236 +801,649 @@ class _RideListScreenState extends State<RideListScreen> {
       ),
     );
   }
-
+//test
   Widget _buildExplorePoolsFeed() {
-    final currentUser = FirebaseAuth.instance.currentUser;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        
-        // 🌟 1. Glassmorphic Alert Bar for Incoming Host Invites
-        if (currentUser != null)
-          StreamBuilder<QuerySnapshot>(
-            stream: FirebaseFirestore.instance
-                .collection('requests')
-                .where('driverId', isEqualTo: currentUser.uid)
-                .where('status', isEqualTo: 'pending')
-                .snapshots(),
-            builder: (context, reqSnapshot) {
-              if (reqSnapshot.hasData && reqSnapshot.data!.docs.isNotEmpty) {
-                final int totalInvites = reqSnapshot.data!.docs.length;
-                return InkWell(
-                  onTap: () {
-                    // Instantly switches tab navigation to 'My Hub'
-                    setState(() => _currentTabNavigationIndex = 2);
-                  },
-                  child: Container(
-                    margin: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                    decoration: BoxDecoration(
-                      color: Colors.orangeAccent.withOpacity(0.12),
-                      borderRadius: BorderRadius.circular(16),
-                      border: Border.all(color: Colors.orangeAccent.withOpacity(0.35), width: 1.5),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.orangeAccent.withOpacity(0.04),
-                          blurRadius: 10,
-                          offset: const Offset(0, 4),
-                        )
-                      ],
-                    ),
-                    child: Row(
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.all(8),
-                          decoration: BoxDecoration(
-                            color: Colors.orangeAccent.withOpacity(0.2),
-                            shape: BoxShape.circle,
-                          ),
-                          child: Icon(Icons.notification_important_rounded, size: 20, color: Colors.orange[800]),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                "Ride Requests Available",//PENDING RIDE INVITES ALERT
-                                style: TextStyle(
-                                  color: Colors.orange[900],
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 14,
-                                ),
-                              ),
-                              const SizedBox(height: 2),
-                              Text(
-                                "You have received $totalInvites ride request${totalInvites > 1 ? 's' : ''}! Tap to review details.",
-                                style: TextStyle(
-                                  color: Colors.orange[800],
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        Icon(Icons.arrow_forward_ios_rounded, size: 14, color: Colors.orange[700]),
-                      ],
+    final bool isDesktop = MediaQuery.of(context).size.width > 800;
+
+    // Detect if filters changed and reset pagination count (DESKTOP ONLY)
+    if (isDesktop && 
+        (_locationSearchQuery != _lastLocationSearchQuery ||
+         _selectedVehicleFilter != _lastSelectedVehicleFilter ||
+         _selectedDateFilter != _lastSelectedDateFilter)) {
+      _desktopVisibleRidesCount = 5;
+      _showMoreButtonVisible = false;
+      _lastLocationSearchQuery = _locationSearchQuery;
+      _lastSelectedVehicleFilter = _selectedVehicleFilter;
+      _lastSelectedDateFilter = _selectedDateFilter;
+    }
+
+    return StreamBuilder<QuerySnapshot>(
+      stream: _ridesStream,
+      builder: (context, snapshot) {
+        final bool isLoading = snapshot.connectionState == ConnectionState.waiting;
+        final bool hasError = snapshot.hasError;
+
+        Widget mainContent;
+        if (hasError) {
+          mainContent = Center(child: Text("Database Connection Issue: ${snapshot.error}"));
+        } else if (isLoading) {
+          mainContent = _buildFullScreenLoader();
+        } else {
+          final rawRides = snapshot.data?.docs ?? [];
+          final now = DateTime.now();
+
+          var rides = rawRides.where((doc) {
+            final data = doc.data() as Map<String, dynamic>;
+            
+            if (data['departureTime'] != null) {
+              final depTime = (data['departureTime'] as Timestamp).toDate();
+              if (depTime.isBefore(now)) return false; 
+            }
+
+            final vType = data['vehicleType'] ?? 'Auto'; 
+            bool matchesVehicle = _selectedVehicleFilter == 'All' || vType.toLowerCase() == _selectedVehicleFilter.toLowerCase();
+            if (!matchesVehicle) return false;
+
+            if (_selectedDateFilter != null && data['departureTime'] != null) {
+              final depDate = (data['departureTime'] as Timestamp).toDate();
+              bool matchesDate = depDate.year == _selectedDateFilter!.year && depDate.month == _selectedDateFilter!.month && depDate.day == _selectedDateFilter!.day;
+              if (!matchesDate) return false;
+            }
+
+            if (_locationSearchQuery.isNotEmpty) {
+              final query = _locationSearchQuery.toLowerCase();
+              if (_locationFilterType == 'Departure') {
+                final pickup = (data['pickupPoint'] ?? '').toString().toLowerCase();
+                if (!pickup.contains(query)) return false;
+              } else {
+                final destination = (data['destination'] ?? '').toString().toLowerCase();
+                if (!destination.contains(query)) return false;
+              }
+            }
+
+            return true;
+          }).toList();
+
+          // 🔥 ALWAYS SORTS BY MOST RECENTLY CREATED FIRST (Regardless of filters)
+          rides.sort((a, b) {
+            final aData = a.data() as Map<String, dynamic>;
+            final bData = b.data() as Map<String, dynamic>;
+            
+            // Uses the document creation time, safely falls back if missing
+            final Timestamp? aTime = aData['timestamp'] as Timestamp? ?? aData['createdAt'] as Timestamp? ?? aData['departureTime'] as Timestamp?;
+            final Timestamp? bTime = bData['timestamp'] as Timestamp? ?? bData['createdAt'] as Timestamp? ?? bData['departureTime'] as Timestamp?;
+            
+            if (aTime == null || bTime == null) return 0;
+            
+            // b.compareTo(a) reverses the order so the newest is at the top
+            return bTime.compareTo(aTime); 
+          });
+
+          // 🔥 Truncate AFTER sorting to ensure you get the absolute 50 newest rides
+          if (rides.length > 50) {
+            rides = rides.sublist(0, 50);
+          }
+
+          if (rides.isEmpty) {
+            mainContent = _buildEmptyState();
+          } else {
+            if (isDesktop) {
+              final visibleRides = rides.take(_desktopVisibleRidesCount).toList();
+              final hasMore = rides.length > _desktopVisibleRidesCount;
+              final itemCount = visibleRides.length + (_desktopIsLoadingMore ? 5 : 0);
+              
+              mainContent = Stack(
+                children: [
+                  Positioned.fill(
+                    child: ListView.builder(
+                      controller: _desktopScrollController,
+                      padding: EdgeInsets.fromLTRB(16, 16, 16, hasMore ? 80 : 16),
+                      itemCount: itemCount,
+                      itemBuilder: (context, index) {
+                        if (index < visibleRides.length) {
+                          final doc = visibleRides[index];
+                          final ride = Ride.fromFirestore(doc);
+                          final data = doc.data() as Map<String, dynamic>;
+                          final String vehicle = data['vehicleType'] ?? 'Auto';
+                          final String phone = data['driverPhone'] ?? '';
+                          return _buildPremiumRideCard(ride, vehicle, phone, doc.id, data);
+                        } else {
+                          return _buildDesktopSkeletonCard();
+                        }
+                      },
                     ),
                   ),
-                );
-              }
-              return const SizedBox.shrink(); 
-            },
-          ),
-
-        _buildFilterDock(), 
-        
-        Expanded(
-          child: StreamBuilder<QuerySnapshot>(
-            // Uses the saved stream so UI state doesn't reset on pagination
-            stream: _ridesStream, 
-            builder: (context, snapshot) {
-              if (snapshot.hasError) return Center(child: Text("Database Connection Issue: ${snapshot.error}"));
-              if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
-              
-              final rawRides = snapshot.data?.docs ?? [];
-              final now = DateTime.now();
-              var rides = rawRides.where((doc) {
-                final data = doc.data() as Map<String, dynamic>;
-                
-                if (data['departureTime'] != null) {
-                  final depTime = (data['departureTime'] as Timestamp).toDate();
-                  final gracePeriod = now.subtract(const Duration(minutes: 10));
-                  if (depTime.isBefore(gracePeriod)) return false; 
-                }
-
-                final vType = data['vehicleType'] ?? 'Auto'; 
-                bool matchesVehicle = _selectedVehicleFilter == 'All' || vType.toLowerCase() == _selectedVehicleFilter.toLowerCase();
-                if (!matchesVehicle) return false;
-
-                if (_selectedDateFilter != null && data['departureTime'] != null) {
-                  final depDate = (data['departureTime'] as Timestamp).toDate();
-                  bool matchesDate = depDate.year == _selectedDateFilter!.year && depDate.month == _selectedDateFilter!.month && depDate.day == _selectedDateFilter!.day;
-                  if (!matchesDate) return false;
-                }
-
-                if (_locationSearchQuery.isNotEmpty) {
-                  final query = _locationSearchQuery.toLowerCase();
-                  if (_locationFilterType == 'Departure') {
-                    final pickup = (data['pickupPoint'] ?? '').toString().toLowerCase();
-                    if (!pickup.contains(query)) return false;
-                  } else {
-                    final destination = (data['destination'] ?? '').toString().toLowerCase();
-                    if (!destination.contains(query)) return false;
-                  }
-                }
-                return true;
-              }).toList();
-
-              rides.sort((a, b) {
-                final aData = a.data() as Map<String, dynamic>;
-                final bData = b.data() as Map<String, dynamic>;
-                final Timestamp? aTime = aData['timestamp'] as Timestamp? ?? aData['createdAt'] as Timestamp? ?? aData['departureTime'] as Timestamp?;
-                final Timestamp? bTime = bData['timestamp'] as Timestamp? ?? bData['createdAt'] as Timestamp? ?? bData['departureTime'] as Timestamp?;
-                
-                if (aTime == null || bTime == null) return 0;
-                return bTime.compareTo(aTime); 
-              });
-
-              int totalMatches = rides.length;
-
-              if (rides.length > _currentDisplayLimit) {
-                rides = rides.sublist(0, _currentDisplayLimit);
-              }
-
-              if (rides.isEmpty) return _buildEmptyState();
-              
-              return ListView.builder(
-                // PageStorageKey preserves the exact scroll position 
-                key: const PageStorageKey('explore_rides_feed_scroll_state'),
-                padding: const EdgeInsets.all(16),
-                itemCount: rides.length + 2, 
-                itemBuilder: (context, index) {
-                  
-                  if (index == 0) {
-                    return Container(
-                      margin: const EdgeInsets.only(bottom: 16),
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                      decoration: BoxDecoration(
-                        color: Colors.indigo[50],
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: Colors.indigo.withOpacity(0.1)),
-                      ),
-                      child: Row(
-                        children: [
-                          Icon(Icons.info_outline, size: 18, color: Colors.indigo[700]),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Text(
-                              "Showing active pools. Use filters above to explore specific journeys!",
-                              style: TextStyle(color: Colors.indigo[900], fontSize: 12, fontWeight: FontWeight.w500),
-                            ),
-                          ),
-                        ],
-                      ),
-                    );
-                  }
-
-                  if (index == rides.length + 1) {
-                    if (totalMatches > _currentDisplayLimit) {
-                      return Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 24),
-                        child: Center(
-                          child: OutlinedButton.icon(
-                            onPressed: () {
-                              setState(() {
-                                _currentDisplayLimit += 5; 
-                              });
-                            },
-                            style: OutlinedButton.styleFrom(
-                              foregroundColor: Colors.indigo,
-                              side: BorderSide(color: Colors.indigo.withOpacity(0.3)),
-                              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                            ),
-                            icon: const Icon(Icons.add_circle_outline),
-                            label: const Text("Show more rides", style: TextStyle(fontWeight: FontWeight.bold)),
-                          ),
-                        ),
-                      );
-                    } else {
-                      return Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 32),
-                        child: Center(
-                          child: Column(
-                            children: [
-                              Icon(Icons.flag_circle_outlined, color: Colors.grey[400], size: 32),
-                              const SizedBox(height: 8),
-                              Text(
-                                "You've reached the end of the road!",
-                                style: TextStyle(color: Colors.grey[500], fontWeight: FontWeight.w600, fontSize: 13),
+                  if (hasMore && _showMoreButtonVisible && !_desktopIsLoadingMore)
+                    Positioned(
+                      left: 0,
+                      right: 0,
+                      bottom: 16,
+                      child: Center(
+                        child: InkWell(
+                          onTap: () {
+                            setState(() {
+                              _desktopIsLoadingMore = true;
+                              _showMoreButtonVisible = false;
+                            });
+                            Future.delayed(const Duration(milliseconds: 1500), () {
+                              if (mounted) {
+                                setState(() {
+                                  _desktopVisibleRidesCount += 5;
+                                  _desktopIsLoadingMore = false;
+                                  // The scroll listener will automatically check if we are at the new bottom.
+                                });
+                              }
+                            });
+                          },
+                          borderRadius: BorderRadius.circular(10),
+                          child: Container(
+                            height: 44,
+                            padding: const EdgeInsets.symmetric(horizontal: 24),
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(
+                                color: const Color(0xFF3F51B5),
+                                width: 1.5,
                               ),
-                            ],
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withValues(alpha: 0.05),
+                                  blurRadius: 4,
+                                  offset: const Offset(0, 2),
+                                ),
+                              ],
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Text(
+                                  "Show More",
+                                  style: GoogleFonts.instrumentSans(
+                                    color: const Color(0xFF3F51B5),
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 14,
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                const Icon(
+                                  Icons.keyboard_arrow_down_rounded,
+                                  color: Color(0xFF3F51B5),
+                                  size: 18,
+                                ),
+                              ],
+                            ),
                           ),
                         ),
-                      );
-                    }
-                  }
-
-                  final doc = rides[index - 1];
+                      ),
+                    ),
+                ],
+              );
+            } else {
+              mainContent = ListView.builder(
+                padding: const EdgeInsets.all(16),
+                itemCount: rides.length,
+                itemBuilder: (context, index) {
+                  final doc = rides[index];
                   final ride = Ride.fromFirestore(doc);
                   final data = doc.data() as Map<String, dynamic>;
                   final String vehicle = data['vehicleType'] ?? 'Auto';
                   final String phone = data['driverPhone'] ?? '';
-                  
                   return _buildPremiumRideCard(ride, vehicle, phone, doc.id, data);
                 },
               );
-            },
+            }
+          }
+        }
+
+        final decoration = isLoading
+            ? const BoxDecoration(color: Colors.white)
+            : const BoxDecoration(
+                image: DecorationImage(
+                  image: AssetImage('web/assets/rideListBG.jpeg'),
+                  repeat: ImageRepeat.repeat,
+                ),
+              );
+
+        if (isDesktop) {
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Expanded(
+                child: Container(
+                  decoration: decoration,
+                  child: Center(
+                    child: SizedBox(
+                      width: 680,
+                      child: mainContent,
+                    ),
+                  ),
+                ),
+              ),
+              Container(
+                width: 320,
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  border: Border(left: BorderSide(color: Colors.grey[200]!)),
+                ),
+                child: _buildDesktopFilterSidebar(),
+              ),
+            ],
+          );
+        } else {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _buildFilterDock(), 
+              Expanded(
+                child: Container(
+                  decoration: decoration,
+                  child: mainContent,
+                ),
+              ),
+            ],
+          );
+        }
+      },
+    );
+  }
+
+  Widget _buildVehicleModeSelector() {
+    final modes = [
+      {'label': 'Auto', 'icon': Icons.electric_rickshaw, 'index': 0},
+      {'label': 'All Pools', 'icon': Icons.all_inclusive, 'index': 1},
+      {'label': 'Cab', 'icon': Icons.local_taxi, 'index': 2},
+    ];
+
+    int activeIndex = 1; // Default 'All'
+    if (_selectedVehicleFilter == 'Auto') activeIndex = 0;
+    if (_selectedVehicleFilter == 'Cab') activeIndex = 2;
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            Color(0xFFE9E8FA),
+            Colors.white,
+          ],
+        ),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: const Color(0xFFE9E8FA), width: 1.5),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceAround,
+            children: modes.map((mode) {
+              final label = mode['label'] as String;
+              final icon = mode['icon'] as IconData;
+              final idx = mode['index'] as int;
+              final isSelected = activeIndex == idx;
+
+              return InkWell(
+                onTap: () {
+                  setState(() {
+                    if (idx == 0) _selectedVehicleFilter = 'Auto';
+                    if (idx == 1) _selectedVehicleFilter = 'All';
+                    if (idx == 2) _selectedVehicleFilter = 'Cab';
+                  });
+                },
+                borderRadius: BorderRadius.circular(16),
+                child: SizedBox(
+                  width: 80,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      SizedBox(
+                        height: 56,
+                        child: Center(
+                          child: isSelected
+                              ? Container(
+                                  padding: const EdgeInsets.all(10),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    shape: BoxShape.circle,
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: Colors.black.withValues(alpha: 0.05),
+                                        blurRadius: 8,
+                                        offset: const Offset(0, 3),
+                                      ),
+                                    ],
+                                  ),
+                                  child: Icon(
+                                    icon,
+                                    size: 26,
+                                    color: const Color(0xFF2E4ECF),
+                                  ),
+                                )
+                              : Icon(
+                                  icon,
+                                  size: 26,
+                                  color: const Color(0xFF2E4ECF),
+                                ),
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      if (isSelected)
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF2E4ECF),
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: Text(
+                            label,
+                            style: GoogleFonts.instrumentSans(
+                              color: Colors.white,
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        )
+                      else
+                        Text(
+                          label,
+                          style: GoogleFonts.instrumentSans(
+                            color: const Color(0xFF7E8CA0),
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              );
+            }).toList(),
+          ),
+          const SizedBox(height: 16),
+          // Dot indicators below
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: List.generate(3, (i) {
+              final isSelected = activeIndex == i;
+              return Container(
+                margin: const EdgeInsets.symmetric(horizontal: 3),
+                width: isSelected ? 16 : 5,
+                height: 5,
+                decoration: BoxDecoration(
+                  color: isSelected ? const Color(0xFF2E4ECF) : const Color(0xFFD2D6DC),
+                  borderRadius: BorderRadius.circular(3),
+                ),
+              );
+            }),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDepartureDateSelector() {
+    final hasDate = _selectedDateFilter != null;
+    return InkWell(
+      onTap: () async {
+        final picked = await showDatePicker(
+          context: context, 
+          initialDate: _selectedDateFilter ?? DateTime.now(), 
+          firstDate: DateTime.now().subtract(const Duration(days: 1)), 
+          lastDate: DateTime.now().add(const Duration(days: 60)),
+          builder: (context, child) {
+            return Theme(
+              data: Theme.of(context).copyWith(
+                colorScheme: const ColorScheme.light(
+                  primary: Colors.indigo,
+                  onPrimary: Colors.white,
+                  onSurface: Colors.black87,
+                ),
+              ),
+              child: child!,
+            );
+          }
+        );
+        if (picked != null) setState(() => _selectedDateFilter = picked);
+      },
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: const Color(0xFFE2E8F0), width: 1),
+        ),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: const Color(0xFFE6F4EA), // light green bg
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: const Icon(
+                Icons.calendar_month_rounded,
+                color: Color(0xFF137333), // dark green color
+                size: 20,
+              ),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    "Select date",
+                    style: GoogleFonts.instrumentSans(
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.black87,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    hasDate ? _formatDate(_selectedDateFilter!) : "Any date",
+                    style: GoogleFonts.instrumentSans(
+                      fontSize: 11,
+                      color: Colors.black54,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            if (hasDate)
+              IconButton(
+                icon: const Icon(Icons.clear_rounded, color: Colors.grey, size: 18),
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(),
+                onPressed: () {
+                  setState(() => _selectedDateFilter = null);
+                },
+              )
+            else
+              const Icon(
+                Icons.chevron_right_rounded,
+                color: Colors.grey,
+                size: 20,
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildOfferRideButton() {
+    return SizedBox(
+      width: double.infinity,
+      height: 48,
+      child: ElevatedButton(
+        style: ElevatedButton.styleFrom(
+          backgroundColor: const Color(0xFF2E4ECF), // blue color from image
+          foregroundColor: Colors.white,
+          elevation: 4,
+          shadowColor: Colors.black.withValues(alpha: 0.3),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
           ),
         ),
-      ],
+        onPressed: () => _handleAction(() {
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const CreateRideScreen()),
+          );
+        }),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(2),
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(
+                Icons.add,
+                size: 14,
+                color: Color(0xFF2E4ECF), // blue icon color
+              ),
+            ),
+            const SizedBox(width: 10),
+            Text(
+              "Offer a Ride",
+              style: GoogleFonts.instrumentSans(
+                fontSize: 14,
+                fontWeight: FontWeight.bold,
+                color: Colors.white,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDesktopFilterSidebar() {
+    return Container(
+      color: Colors.white,
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+      child: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text(
+                  "Filters",
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black87),
+                ),
+                TextButton(
+                  onPressed: () {
+                    _locationSearchController.clear();
+                    setState(() {
+                      _locationSearchQuery = '';
+                      _selectedVehicleFilter = 'All';
+                      _selectedDateFilter = null;
+                    });
+                  },
+                  child: const Text("Reset", style: TextStyle(color: Colors.indigo, fontWeight: FontWeight.bold)),
+                ),
+              ],
+            ),
+            const Divider(height: 24, color: Color(0xFFF1F3F5)),
+            
+            // Search section
+            const Text(
+              "Search Route",
+              style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.black54),
+            ),
+            const SizedBox(height: 10),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              decoration: BoxDecoration(
+                color: Colors.indigo[50],
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: DropdownButtonHideUnderline(
+                child: DropdownButton<String>(
+                  value: _locationFilterType,
+                  isExpanded: true,
+                  icon: const Icon(Icons.arrow_drop_down_rounded, color: Colors.indigo),
+                  dropdownColor: Colors.white,
+                  borderRadius: BorderRadius.circular(12),
+                  style: const TextStyle(color: Colors.indigo, fontWeight: FontWeight.bold, fontSize: 13),
+                  items: const [
+                    DropdownMenuItem(value: 'Departure', child: Text("By Pickup Point")),
+                    DropdownMenuItem(value: 'Destination', child: Text("By Destination")),
+                  ],
+                  onChanged: (val) => setState(() => _locationFilterType = val!),
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+            Container(
+              height: 44,
+              decoration: BoxDecoration(
+                color: const Color(0xFFF1F3F5),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: TextField(
+                controller: _locationSearchController,
+                onChanged: (val) => setState(() => _locationSearchQuery = val),
+                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: Colors.black87),
+                decoration: InputDecoration(
+                  hintText: _locationFilterType == 'Departure' ? "Search pickup point..." : "Search drop point...",
+                  hintStyle: TextStyle(color: Colors.grey[500], fontSize: 13),
+                  prefixIcon: const Icon(Icons.search_rounded, size: 18, color: Colors.indigo),
+                  suffixIcon: _locationSearchQuery.isNotEmpty
+                      ? IconButton(
+                          icon: const Icon(Icons.clear_rounded, size: 16, color: Colors.black54),
+                          onPressed: () {
+                            _locationSearchController.clear();
+                            setState(() => _locationSearchQuery = '');
+                          },
+                        )
+                      : null,
+                  border: InputBorder.none,
+                  contentPadding: const EdgeInsets.symmetric(vertical: 11),
+                ),
+              ),
+            ),
+            const SizedBox(height: 24),
+  
+            // Vehicle selection
+            const Text(
+              "Vehicle Mode",
+              style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.black54),
+            ),
+            const SizedBox(height: 10),
+            _buildVehicleModeSelector(),
+            const SizedBox(height: 24),
+  
+            // Date selection
+            const Text(
+              "Departure Date",
+              style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.black54),
+            ),
+            const SizedBox(height: 10),
+            _buildDepartureDateSelector(),
+            const SizedBox(height: 24),
+  
+            // Offer a Ride button
+            _buildOfferRideButton(),
+          ],
+        ),
+      ),
     );
   }
 
@@ -998,7 +1460,7 @@ class _RideListScreenState extends State<RideListScreen> {
         color: Colors.white,
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.04),
+            color: Colors.black.withValues(alpha: 0.04),
             blurRadius: 10,
             offset: const Offset(0, 4),
           ),
@@ -1046,7 +1508,7 @@ class _RideListScreenState extends State<RideListScreen> {
                 decoration: BoxDecoration(
                   color: Colors.indigo[50],
                   borderRadius: BorderRadius.circular(14),
-                  border: Border.all(color: Colors.indigo.withOpacity(0.1)),
+                  border: Border.all(color: Colors.indigo.withValues(alpha: 0.1)),
                 ),
                 child: DropdownButtonHideUnderline(
                   child: DropdownButton<String>(
@@ -1207,7 +1669,7 @@ class _RideListScreenState extends State<RideListScreen> {
     return StreamBuilder<QuerySnapshot>(
       stream: FirebaseFirestore.instance.collection('rides').where('driverId', isEqualTo: uid).snapshots(),
       builder: (context, snapshot) {
-        if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+        if (!snapshot.hasData) return _buildFullScreenLoader();
         final docs = snapshot.data!.docs.toList();
         
         // Safe Timestamp extraction
@@ -1242,7 +1704,7 @@ class _RideListScreenState extends State<RideListScreen> {
     return StreamBuilder<QuerySnapshot>(
       stream: FirebaseFirestore.instance.collection('requests').where('passengerId', isEqualTo: uid).where('status', isEqualTo: 'accepted').snapshots(),
       builder: (context, snapshot) {
-        if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+        if (!snapshot.hasData) return _buildFullScreenLoader();
         final reqDocs = snapshot.data!.docs;
         
         if (reqDocs.isEmpty) return _buildMiniEmptyState(Icons.airline_seat_recline_normal, "No confirmed rides yet", "When a host accepts your join request, the confirmed ride will appear here.");
@@ -1353,7 +1815,7 @@ class _RideListScreenState extends State<RideListScreen> {
           decoration: BoxDecoration(
             color: Colors.white,
             borderRadius: BorderRadius.circular(20),
-            boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 10, offset: const Offset(0, 4))],
+            boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 10, offset: const Offset(0, 4))],
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -1499,7 +1961,7 @@ class _RideListScreenState extends State<RideListScreen> {
     return StreamBuilder<QuerySnapshot>(
       stream: FirebaseFirestore.instance.collection('requests').where('driverId', isEqualTo: uid).snapshots(),
       builder: (context, snapshot) {
-        if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+        if (!snapshot.hasData) return _buildFullScreenLoader();
         
         final reqDocs = snapshot.data!.docs.toList();
         reqDocs.sort((a, b) {
@@ -1627,7 +2089,7 @@ class _RideListScreenState extends State<RideListScreen> {
     return StreamBuilder<QuerySnapshot>(
       stream: FirebaseFirestore.instance.collection('requests').where('passengerId', isEqualTo: uid).snapshots(),
       builder: (context, snapshot) {
-        if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+        if (!snapshot.hasData) return _buildFullScreenLoader();
         
         final reqDocs = snapshot.data!.docs.toList();
         reqDocs.sort((a, b) {
@@ -1751,17 +2213,46 @@ class _RideListScreenState extends State<RideListScreen> {
     );
   }
 
+  Widget _buildFullScreenLoader() {
+    return Container(
+      color: Colors.white,
+      alignment: Alignment.center,
+      child: SizedBox(
+        width: 300,
+        height: 300,
+        child: Image.network(
+          'assets/loadScreen.gif',
+          fit: BoxFit.contain,
+        ),
+      ),
+    );
+  }
+
   Widget _buildPremiumRideCard(Ride ride, String vehicle, String phone, String docId, Map<String, dynamic> rawData) {
+    return FutureBuilder<DocumentSnapshot>(
+      future: FirebaseFirestore.instance.collection('users').doc(ride.driverId).get(),
+      builder: (context, userSnap) {
+        String profilePicUrl = '';
+        if (userSnap.hasData && userSnap.data!.exists) {
+          final userData = userSnap.data!.data() as Map<String, dynamic>?;
+          profilePicUrl = userData?['profilePic'] ?? '';
+        }
+        return _buildPremiumRideCardWithData(ride, vehicle, phone, docId, rawData, profilePicUrl);
+      },
+    );
+  }
+
+  Widget _buildPremiumRideCardWithData(
+    Ride ride,
+    String vehicle,
+    String phone,
+    String docId,
+    Map<String, dynamic> rawData,
+    String profilePicUrl,
+  ) {
     final currentUser = FirebaseAuth.instance.currentUser;
     final bool isMyOwnRide = currentUser != null && ride.driverId == currentUser.uid;
-    
-    // 🔥 Mask applied here
-    String hostName = _cleanName(ride.driverName); 
-
-    // --- HOST GENDER LOGIC ---
-    //String hostGender = (rawData['driverGender'] ?? rawData['gender'] ?? 'Male').toString().toLowerCase();
-    //Color bookmarkColor = hostGender == 'female' ? Colors.pink[400]! : Colors.blue[400]!;
-   // String genderTooltip = hostGender == 'female' ? "Hosted by Female" : "Hosted by Male";
+    String hostName = _cleanName(ride.driverName);
     
     String journeyNotes = rawData['journeyNotes'] ?? '';
     bool hasNotes = journeyNotes.trim().isNotEmpty;
@@ -1775,220 +2266,796 @@ class _RideListScreenState extends State<RideListScreen> {
     
     int joinedCount = acceptedPassengers + 1;
     int emptySeats = currentAvailable < 0 ? 0 : currentAvailable;
+
+    final bool isDesktop = MediaQuery.of(context).size.width > 800;
+
+    if (isDesktop) {
+      return _buildDesktopCard(
+        ride: ride,
+        vehicle: vehicle,
+        phone: phone,
+        docId: docId,
+        rawData: rawData,
+        profilePicUrl: profilePicUrl,
+        currentUser: currentUser,
+        isMyOwnRide: isMyOwnRide,
+        hostName: hostName,
+        hasNotes: hasNotes,
+        joinedCount: joinedCount,
+        currentAvailable: currentAvailable,
+        totalCapacity: totalCapacity,
+        emptySeats: emptySeats,
+      );
+    } else {
+      return _buildMobileCard(
+        ride: ride,
+        vehicle: vehicle,
+        phone: phone,
+        docId: docId,
+        rawData: rawData,
+        profilePicUrl: profilePicUrl,
+        currentUser: currentUser,
+        isMyOwnRide: isMyOwnRide,
+        hostName: hostName,
+        hasNotes: hasNotes,
+        joinedCount: joinedCount,
+        currentAvailable: currentAvailable,
+        totalCapacity: totalCapacity,
+        emptySeats: emptySeats,
+      );
+    }
+  }
+
+  Widget _buildDesktopCard({
+    required Ride ride,
+    required String vehicle,
+    required String phone,
+    required String docId,
+    required Map<String, dynamic> rawData,
+    required String profilePicUrl,
+    required User? currentUser,
+    required bool isMyOwnRide,
+    required String hostName,
+    required bool hasNotes,
+    required int joinedCount,
+    required int currentAvailable,
+    required int totalCapacity,
+    required int emptySeats,
+  }) {
+    final pickupCity = _getCityName(ride.pickupPoint);
+    final pickupAbbr = _getAbbreviation(ride.pickupPoint);
+    final destCity = _getCityName(ride.destination);
+    final destAbbr = _getAbbreviation(ride.destination);
+    final travelDuration = _getTravelDuration(ride.pickupPoint, ride.destination);
+    final arrivalTime = _getArrivalTime(ride.departureTime, travelDuration);
+
+    final departureTimeStr = "${_formatDate(ride.departureTime)}, ${_formatTimeOfDeparture(ride.departureTime)}";
+    final arrivalTimeStr = "${_formatDate(arrivalTime)}, ${_formatTimeOfDeparture(arrivalTime)}";
+
     return InkWell(
       onTap: () => _handleRideTap(docId, rawData, isMyOwnRide, totalCapacity, emptySeats),
-      borderRadius: BorderRadius.circular(20),
       child: Container(
         margin: const EdgeInsets.only(bottom: 16),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(20),
-          boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 12, offset: Offset(0, 4))],
-        ),
-        child: Padding(
-          padding: const EdgeInsets.all(20),
+        child: TicketCard(
+          cutPosition: 64.0,
+          cutRadius: 10.0,
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Row(
-                children: [
-                  CircleAvatar(
-                    backgroundColor: Colors.indigo[50],
-                    child: Text(hostName.substring(0, 1).toUpperCase(), style: const TextStyle(color: Colors.indigo, fontWeight: FontWeight.bold)),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+              // Header Section (above notches, height 64)
+              Container(
+                height: 64,
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                alignment: Alignment.center,
+                child: Row(
+                  children: [
+                    CircleAvatar(
+                      radius: 16,
+                      backgroundColor: const Color(0xFFE8EAF6),
+                      child: Text(
+                        hostName.isNotEmpty ? hostName.substring(0, 1).toUpperCase() : 'U',
+                        style: GoogleFonts.inriaSans(
+                          color: const Color(0xFF3F51B5),
+                          fontWeight: FontWeight.bold,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Text(
+                      hostName,
+                      style: GoogleFonts.inriaSans(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                        color: Colors.black87,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    const Icon(Icons.check_circle, color: Colors.green, size: 16),
+                    if (hasNotes) ...[
+                      const SizedBox(width: 6),
+                      InkWell(
+                        onTap: () => _showNotesDialog(docId, rawData, isMyOwnRide),
+                        child: const Icon(Icons.speaker_notes, size: 14, color: Colors.blue),
+                      ),
+                    ],
+                    if (isMyOwnRide) ...[
+                      const SizedBox(width: 6),
+                      InkWell(
+                        onTap: () => _confirmDeleteRide(docId),
+                        child: const Icon(Icons.delete_outline, size: 16, color: Colors.redAccent),
+                      ),
+                    ],
+                    const Spacer(),
+                    _buildVehicleBadge(vehicle),
+                  ],
+                ),
+              ),
+              
+              // Body Section (below notches)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    // Route Detail Row
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        Text(hostName, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                        _buildLocationDetailColumn(pickupCity, pickupAbbr, departureTimeStr, crossAxisAlignment: CrossAxisAlignment.start, isDesktop: true),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: _buildRouteTrajectoryWidget(vehicle, travelDuration),
+                        ),
+                        const SizedBox(width: 12),
+                        _buildLocationDetailColumn(destCity, destAbbr, arrivalTimeStr, crossAxisAlignment: CrossAxisAlignment.end, isDesktop: true),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    // Metadata Row: Joined, spots, countdown
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
                         Row(
                           children: [
-                            const Text("Verified VIT Student", style: TextStyle(color: Colors.green, fontSize: 11, fontWeight: FontWeight.w500)),
-                            const Text(" • ", style: TextStyle(color: Colors.grey, fontSize: 11)),
-                            Text(_getTimeAgo(rawData['timestamp'] ?? rawData['createdAt']), style: const TextStyle(color: Colors.grey, fontSize: 11)),
+                            Icon(Icons.group_rounded, size: 16, color: Colors.indigo[800]),
+                            const SizedBox(width: 6),
+                            Text(
+                              "$joinedCount joined",
+                              style: const TextStyle(
+                                fontFamily: 'Times New Roman',
+                                color: Color(0xFF3F51B5),
+                                fontSize: 16,
+                                fontWeight: FontWeight.w400,
+                              ),
+                            ),
                           ],
+                        ),
+                        Text(
+                          currentAvailable <= 0 ? "Full" : "$currentAvailable spots left",
+                          style: TextStyle(
+                            fontFamily: 'Times New Roman',
+                            color: currentAvailable <= 0 ? Colors.red : Colors.green[700],
+                            fontSize: 16,
+                            fontWeight: FontWeight.w400,
+                          ),
+                        ),
+                        Text(
+                          _formatDepartureCountdown(ride.departureTime),
+                          style: TextStyle(
+                            fontFamily: 'Times New Roman',
+                            color: Colors.orange[800],
+                            fontSize: 16,
+                            fontWeight: FontWeight.w400,
+                          ),
                         ),
                       ],
                     ),
-                  ),
-                  Container(
-                    padding: const EdgeInsets.fromLTRB(10, 6, 10, 6),
-                    decoration: BoxDecoration(color: Colors.amber[50], borderRadius: BorderRadius.circular(12)),
-                    child: Row(
+                    const SizedBox(height: 16),
+                    // Buttons Row (side-by-side)
+                    Row(
                       children: [
-                        Icon(vehicle.toLowerCase() == 'cab' ? Icons.local_taxi : Icons.electric_rickshaw, size: 14, color: Colors.amber[800]),
-                        const SizedBox(width: 4),
-                        Text(vehicle, style: TextStyle(color: Colors.amber[800], fontSize: 12, fontWeight: FontWeight.bold)),
+                        Expanded(
+                          child: SizedBox(
+                            height: 38,
+                            child: OutlinedButton.icon(
+                              onPressed: () {
+                                if (currentUser == null) {
+                                  _showLogin(() => _launchWhatsApp(phone, ride.driverId, hostName, ride.pickupPoint, ride.destination));
+                                } else {
+                                  _launchWhatsApp(phone, ride.driverId, hostName, ride.pickupPoint, ride.destination);
+                                }
+                              },
+                              icon: const Icon(Icons.chat_bubble_outline_rounded, size: 14),
+                              label: const Text("Chat", style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: Colors.indigo,
+                                side: BorderSide(color: Colors.indigo[100]!),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                                padding: EdgeInsets.zero,
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: SizedBox(
+                            height: 38,
+                            child: _buildResponsiveJoinButton(
+                              currentUser: currentUser,
+                              isMyOwnRide: isMyOwnRide,
+                              docId: docId,
+                              ride: ride,
+                              currentAvailable: currentAvailable,
+                              height: 38,
+                              borderRadius: 8,
+                              fontSize: 13,
+                            ),
+                          ),
+                        ),
                       ],
-                    ),
-                  ),
-                  // REMOVING GENDER BOOKMARKS - FOR HOST
-                  // --- GENDER BOOKMARK ---
-                  //const SizedBox(width: 8),
-                  //Tooltip(
-                    //message: genderTooltip,
-                    //child: Icon(Icons.bookmark, color: bookmarkColor, size: 22),
-                  //),
-
-                  if (hasNotes) ...[
-                    const SizedBox(width: 8),
-                    InkWell(
-                      onTap: () => _showNotesDialog(docId, rawData, isMyOwnRide),
-                      borderRadius: BorderRadius.circular(20),
-                      child: Container(
-                        padding: const EdgeInsets.all(8),
-                        decoration: BoxDecoration(color: Colors.blue[50], shape: BoxShape.circle),
-                        child: const Icon(Icons.speaker_notes, size: 14, color: Colors.blue),
-                      ),
                     ),
                   ],
-
-                  if (isMyOwnRide) ...[
-                    const SizedBox(width: 8),
-                    IconButton(icon: const Icon(Icons.delete_outline, color: Colors.redAccent, size: 22), tooltip: "Cancel this offer", onPressed: () => _confirmDeleteRide(docId))
-                  ]
-                ],
+                ),
               ),
-              const Padding(padding: EdgeInsets.symmetric(vertical: 12), child: Divider(height: 1, color: Color(0xFFF1F3F5))),
-              
-              Row(
-                children: [
-                  Column(
-                    children: [
-                      const Icon(Icons.radio_button_checked, size: 18, color: Colors.indigo),
-                      Container(width: 2, height: 24, color: Colors.grey[200]),
-                      const Icon(Icons.location_on, size: 18, color: Colors.redAccent),
-                    ],
-                  ),
-                  const SizedBox(width: 14),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(ride.pickupPoint, style: const TextStyle(fontSize: 14, color: Colors.black54)),
-                        const SizedBox(height: 18),
-                        Text(ride.destination, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Colors.black87)),
-                      ],
-                    ),
-                  ),
-                  
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const Icon(Icons.group, size: 14, color: Colors.indigo),
-                          const SizedBox(width: 4),
-                          Text("$joinedCount joined", style: const TextStyle(color: Colors.indigo, fontSize: 12, fontWeight: FontWeight.w600)),
-                        ],
-                      ),
-                      const SizedBox(height: 4),
-                      currentAvailable <= 0 
-                        ? const Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(Icons.cancel, size: 14, color: Colors.redAccent),
-                              SizedBox(width: 4),
-                              Text("Ride Full, Cannot join", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.redAccent, fontSize: 13)),
-                            ],
-                          )
-                        : Text("$currentAvailable spots left", style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.green, fontSize: 13)),
-                      const SizedBox(height: 6),
-                      Text(_formatDepartureCountdown(ride.departureTime), style: const TextStyle(color: Colors.orangeAccent, fontWeight: FontWeight.bold, fontSize: 12)),
-                      const SizedBox(height: 2),
-                      Text("${_formatDate(ride.departureTime)}, ${_formatTimeOfDeparture(ride.departureTime)}", style: const TextStyle(color: Colors.grey, fontSize: 10)),
-                    ],
-                  )
-                ],
-              ),
-              const SizedBox(height: 20),
-              
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: () {
-                        if (currentUser == null) {
-                          _showLogin(() { 
-                            _launchWhatsApp(phone, ride.driverId, hostName, ride.pickupPoint, ride.destination);
-                          });
-                        } else {
-                          _launchWhatsApp(phone, ride.driverId, hostName, ride.pickupPoint, ride.destination);
-                        }
-                      },
-                      icon: const Icon(Icons.chat_bubble_outline, size: 18),
-                      label: const Text("Chat"),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: Colors.indigo, 
-                        side: BorderSide(color: Colors.indigo[100]!), 
-                        padding: const EdgeInsets.all(12), 
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  
-                  Expanded(
-                    child: currentUser == null 
-                    ? ElevatedButton(
-                        onPressed: () => _showLogin(() => _sendJoinRequest(docId, ride)),
-                        style: ElevatedButton.styleFrom(backgroundColor: Colors.indigo, foregroundColor: Colors.white, elevation: 0, padding: const EdgeInsets.all(12), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
-                        child: const Text("Join Ride", style: TextStyle(fontWeight: FontWeight.bold)),
-                      )
-                    : isMyOwnRide 
-                      ? ElevatedButton(
-                          onPressed: null, 
-                          style: ElevatedButton.styleFrom(backgroundColor: Colors.grey[200], foregroundColor: Colors.grey[600], elevation: 0, padding: const EdgeInsets.all(12), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
-                          child: const Text("Your Ride", style: TextStyle(fontWeight: FontWeight.bold)),
-                        )
-                      : StreamBuilder<QuerySnapshot>(
-                          stream: FirebaseFirestore.instance.collection('requests').where('rideId', isEqualTo: docId).where('passengerId', isEqualTo: currentUser.uid).snapshots(),
-                          builder: (ctx, snap) {
-                            String btnText = "Join Ride";
-                            Color btnColor = Colors.indigo;
-                            VoidCallback? onPressedAction = () => _sendJoinRequest(docId, ride);
-
-                            if (snap.hasData && snap.data!.docs.isNotEmpty) {
-                              final reqDoc = snap.data!.docs.first;
-                              final reqData = reqDoc.data() as Map<String, dynamic>;
-                              final status = reqData['status'] ?? 'pending';
-                              
-                              if (status == 'accepted') { 
-                                btnText = "Leave Ride"; 
-                                btnColor = Colors.redAccent; 
-                                onPressedAction = () => _confirmLeaveRide(docId, reqDoc.id); 
-                              } 
-                              else if (status == 'pending') { 
-                                btnText = "Cancel Request"; 
-                                btnColor = Colors.orange; 
-                                onPressedAction = () => _confirmClearRequest(reqDoc.id); 
-                              }
-                            } else {
-                              if (currentAvailable <= 0) { 
-                                btnText = "Pool Full"; 
-                                btnColor = Colors.redAccent; 
-                                onPressedAction = null; 
-                              }
-                            }
-                            
-                            return ElevatedButton(
-                              onPressed: onPressedAction,
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: btnColor, disabledBackgroundColor: btnColor.withOpacity(0.8), disabledForegroundColor: Colors.white, foregroundColor: Colors.white, elevation: 0, padding: const EdgeInsets.all(12), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                              ),
-                              child: Text(btnText, style: const TextStyle(fontWeight: FontWeight.bold)),
-                            );
-                          },
-                      ),
-                  ),
-                ],
-              )
             ],
           ),
         ),
       ),
+    );
+  }
+
+  Widget _buildMobileCard({
+    required Ride ride,
+    required String vehicle,
+    required String phone,
+    required String docId,
+    required Map<String, dynamic> rawData,
+    required String profilePicUrl,
+    required User? currentUser,
+    required bool isMyOwnRide,
+    required String hostName,
+    required bool hasNotes,
+    required int joinedCount,
+    required int currentAvailable,
+    required int totalCapacity,
+    required int emptySeats,
+  }) {
+    final pickupCity = _getCityName(ride.pickupPoint);
+    final pickupAbbr = _getAbbreviation(ride.pickupPoint);
+    final destCity = _getCityName(ride.destination);
+    final destAbbr = _getAbbreviation(ride.destination);
+    final travelDuration = _getTravelDuration(ride.pickupPoint, ride.destination);
+    final arrivalTime = _getArrivalTime(ride.departureTime, travelDuration);
+
+    final departureTimeStr = "${_formatDate(ride.departureTime)}, ${_formatTimeOfDeparture(ride.departureTime)}";
+    final arrivalTimeStr = "${_formatDate(arrivalTime)}, ${_formatTimeOfDeparture(arrivalTime)}";
+
+    return InkWell(
+      onTap: () => _handleRideTap(docId, rawData, isMyOwnRide, totalCapacity, emptySeats),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        child: TicketCard(
+          cutPosition: 52.0,
+          cutRadius: 8.0,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // Header Section (above notches, height 52)
+              Container(
+                height: 52,
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                alignment: Alignment.center,
+                child: Row(
+                  children: [
+                    CircleAvatar(
+                      radius: 12,
+                      backgroundColor: const Color(0xFFE8EAF6),
+                      child: Text(
+                        hostName.isNotEmpty ? hostName.substring(0, 1).toUpperCase() : 'U',
+                        style: GoogleFonts.inriaSans(
+                          color: const Color(0xFF3F51B5),
+                          fontWeight: FontWeight.bold,
+                          fontSize: 10,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      hostName,
+                      style: GoogleFonts.inriaSans(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 13,
+                        color: Colors.black87,
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    const Icon(Icons.check_circle, color: Colors.green, size: 14),
+                    if (hasNotes) ...[
+                      const SizedBox(width: 4),
+                      InkWell(
+                        onTap: () => _showNotesDialog(docId, rawData, isMyOwnRide),
+                        child: const Icon(Icons.speaker_notes, size: 12, color: Colors.blue),
+                      ),
+                    ],
+                    if (isMyOwnRide) ...[
+                      const SizedBox(width: 4),
+                      InkWell(
+                        onTap: () => _confirmDeleteRide(docId),
+                        child: const Icon(Icons.delete_outline, size: 13, color: Colors.redAccent),
+                      ),
+                    ],
+                    const Spacer(),
+                    _buildVehicleBadge(vehicle),
+                  ],
+                ),
+              ),
+              
+              // Body Section (below notches)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    // Route Detail Row
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        _buildLocationDetailColumn(pickupCity, pickupAbbr, departureTimeStr, crossAxisAlignment: CrossAxisAlignment.start),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: _buildRouteTrajectoryWidget(vehicle, travelDuration),
+                        ),
+                        const SizedBox(width: 8),
+                        _buildLocationDetailColumn(destCity, destAbbr, arrivalTimeStr, crossAxisAlignment: CrossAxisAlignment.end),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    // Metadata Row: Joined, spots, countdown
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Row(
+                          children: [
+                            Icon(Icons.group_rounded, size: 14, color: Colors.indigo[800]),
+                            const SizedBox(width: 4),
+                            Text(
+                              "$joinedCount joined",
+                              style: GoogleFonts.instrumentSans(
+                                color: Colors.indigo[800],
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
+                        ),
+                        Text(
+                          currentAvailable <= 0 ? "Full" : "$currentAvailable spots left",
+                          style: GoogleFonts.instrumentSans(
+                            color: currentAvailable <= 0 ? Colors.red : Colors.green[700],
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        Text(
+                          _formatDepartureCountdown(ride.departureTime),
+                          style: GoogleFonts.instrumentSans(
+                            color: Colors.orange[800],
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    // Buttons Row (side-by-side)
+                    Row(
+                      children: [
+                        Expanded(
+                          child: SizedBox(
+                            height: 34,
+                            child: OutlinedButton.icon(
+                              onPressed: () {
+                                if (currentUser == null) {
+                                  _showLogin(() => _launchWhatsApp(phone, ride.driverId, hostName, ride.pickupPoint, ride.destination));
+                                } else {
+                                  _launchWhatsApp(phone, ride.driverId, hostName, ride.pickupPoint, ride.destination);
+                                }
+                              },
+                              icon: const Icon(Icons.chat_bubble_outline_rounded, size: 12),
+                              label: const Text("Chat", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: Colors.indigo,
+                                side: BorderSide(color: Colors.indigo[100]!),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                                padding: EdgeInsets.zero,
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: SizedBox(
+                            height: 34,
+                            child: _buildResponsiveJoinButton(
+                              currentUser: currentUser,
+                              isMyOwnRide: isMyOwnRide,
+                              docId: docId,
+                              ride: ride,
+                              currentAvailable: currentAvailable,
+                              height: 34,
+                              borderRadius: 8,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildLocationDetailColumn(String city, String abbreviation, String dateTime, {required CrossAxisAlignment crossAxisAlignment, bool isDesktop = false}) {
+    final fontWeight = isDesktop ? FontWeight.w400 : FontWeight.w300;
+    return Column(
+      crossAxisAlignment: crossAxisAlignment,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          city,
+          style: TextStyle(
+            fontFamily: 'Times New Roman',
+            fontSize: 16,
+            fontWeight: fontWeight,
+            color: Colors.black54,
+          ),
+        ),
+        const SizedBox(height: 2),
+        Text(
+          abbreviation,
+          style: TextStyle(
+            fontFamily: 'Times New Roman',
+            fontSize: 16,
+            fontWeight: isDesktop ? FontWeight.bold : FontWeight.w300,
+            color: Colors.black87,
+          ),
+        ),
+        const SizedBox(height: 2),
+        Text(
+          dateTime,
+          style: TextStyle(
+            fontFamily: 'Times New Roman',
+            fontSize: 16,
+            fontWeight: fontWeight,
+            color: Colors.black54,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildRouteTrajectoryWidget(String vehicle, String duration) {
+    final isCab = vehicle.toLowerCase() == 'cab';
+    final travelIcon = isCab ? Icons.local_taxi : Icons.electric_rickshaw;
+    final iconColor = isCab ? Colors.blue[800]! : Colors.amber[800]!;
+
+    return SizedBox(
+      height: 48,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          Positioned.fill(
+            child: CustomPaint(
+              painter: DashedArcPainter(color: Colors.grey[300]!),
+            ),
+          ),
+          Positioned(
+            left: 0,
+            right: 0,
+            top: 2,
+            child: Icon(
+              travelIcon,
+              size: 15,
+              color: iconColor,
+            ),
+          ),
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            child: Text(
+              duration,
+              textAlign: TextAlign.center,
+              style: GoogleFonts.instrumentSans(color: Colors.grey[600], fontSize: 10, fontWeight: FontWeight.bold),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCarAvatarWidget(String profilePic, String hostName, double carWidth, {bool isDesktop = false}) {
+    final double carHeight = carWidth * (210 / 297);
+    return SizedBox(
+      width: carWidth,
+      height: carHeight,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          Positioned.fill(
+            child: SvgPicture.asset(
+              'web/assets/cabConvertible.svg',
+              fit: BoxFit.contain,
+            ),
+          ),
+          Positioned(
+            left: carWidth * 0.40 + 9.0,
+            top: isDesktop ? carHeight * 0.02 : carHeight * 0.18,
+            width: carWidth * 0.25,
+            height: carWidth * 0.25,
+            child: Container(
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(color: Colors.white, width: 1.5),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.1),
+                    blurRadius: 3,
+                    offset: const Offset(0, 1.5),
+                  ),
+                ],
+              ),
+              child: ClipOval(
+                child: profilePic.isNotEmpty
+                    ? Image.network(
+                        profilePic,
+                        fit: BoxFit.cover,
+                        errorBuilder: (ctx, _, _) => _buildInitialsAvatar(hostName),
+                      )
+                    : _buildInitialsAvatar(hostName),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildInitialsAvatar(String name) {
+    final initial = name.isNotEmpty ? name.substring(0, 1).toUpperCase() : 'U';
+    return Container(
+      color: const Color(0xFFE8EAF6),
+      alignment: Alignment.center,
+      child: Text(
+        initial,
+        style: GoogleFonts.inriaSans(
+          color: const Color(0xFF3F51B5),
+          fontWeight: FontWeight.bold,
+          fontSize: 10,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildVehicleBadge(String vehicle) {
+    final isCab = vehicle.toLowerCase() == 'cab';
+    final label = isCab ? "CAB" : "AUTO";
+    final icon = isCab ? Icons.local_taxi : Icons.electric_rickshaw;
+    final bgColor = isCab ? const Color(0xFFE3F2FD) : const Color(0xFFFFF3E0);
+    final borderColor = isCab ? const Color(0xFF90CAF9) : const Color(0xFFFFB74D);
+    final contentColor = isCab ? const Color(0xFF0D47A1) : const Color(0xFFE65100);
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: bgColor,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: borderColor, width: 1),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 12, color: contentColor),
+          const SizedBox(width: 4),
+          Text(
+            label,
+            style: GoogleFonts.instrumentSans(
+              color: contentColor,
+              fontSize: 9,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 0.5,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _getAbbreviation(String location) {
+    final clean = location.trim().toLowerCase();
+    if (clean.contains('katpadi') || clean.contains('kpd')) return 'KPD';
+    if (clean.contains('vit') || clean.contains('vellore')) return 'VIT';
+    if (clean.contains('chennai') || clean.contains('maa') || clean.contains('airport')) {
+      if (clean.contains('chennai') || clean.contains('maa')) return 'MAA';
+      if (clean.contains('bangalore') || clean.contains('bengaluru') || clean.contains('blr')) return 'BLR';
+      return 'APT';
+    }
+    if (clean.contains('bangalore') || clean.contains('bengaluru') || clean.contains('blr')) return 'BLR';
+    if (clean.contains('hostel')) return 'HST';
+    if (clean.contains('main gate') || clean.contains('maingate')) return 'MGT';
+    if (clean.contains('chittoor')) return 'CTR';
+    
+    final words = location.split(RegExp(r'\s+'));
+    if (words.length >= 2) {
+      String abb = '';
+      for (var w in words) {
+        if (w.isNotEmpty) abb += w[0];
+      }
+      if (abb.length >= 2) return abb.toUpperCase();
+    }
+    if (location.length >= 3) {
+      return location.substring(0, 3).toUpperCase();
+    }
+    return location.toUpperCase();
+  }
+
+  String _getTravelDuration(String from, String to) {
+    final f = from.trim().toLowerCase();
+    final t = to.trim().toLowerCase();
+    
+    bool fromLocal = f.contains('katpadi') || f.contains('kpd') || f.contains('vit') || f.contains('vellore') || f.contains('hostel') || f.contains('gate');
+    bool toLocal = t.contains('katpadi') || t.contains('kpd') || t.contains('vit') || t.contains('vellore') || t.contains('hostel') || t.contains('gate');
+    
+    if (fromLocal && toLocal) {
+      return "25m";
+    }
+    if (f.contains('chennai') || f.contains('maa') || t.contains('chennai') || t.contains('maa')) {
+      return "3h 30m";
+    }
+    if (f.contains('bangalore') || f.contains('blr') || t.contains('bangalore') || t.contains('blr') || f.contains('bengaluru') || t.contains('bengaluru')) {
+      return "4h 0m";
+    }
+    return "45m";
+  }
+
+  DateTime _getArrivalTime(DateTime departureTime, String duration) {
+    if (duration.contains('h')) {
+      final parts = duration.split(' ');
+      int hours = 0;
+      int minutes = 0;
+      for (var p in parts) {
+        if (p.endsWith('h')) {
+          hours = int.tryParse(p.replaceAll('h', '')) ?? 0;
+        } else if (p.endsWith('m')) {
+          minutes = int.tryParse(p.replaceAll('m', '')) ?? 0;
+        }
+      }
+      return departureTime.add(Duration(hours: hours, minutes: minutes));
+    } else {
+      int minutes = int.tryParse(duration.replaceAll('m', '')) ?? 30;
+      return departureTime.add(Duration(minutes: minutes));
+    }
+  }
+
+  String _getCityName(String location) {
+    final clean = location.trim().toLowerCase();
+    if (clean.contains('katpadi') || clean.contains('kpd')) return 'Katpadi';
+    if (clean.contains('vit') || clean.contains('vellore')) return 'Vellore';
+    if (clean.contains('chennai') || clean.contains('maa')) {
+      if (clean.contains('airport')) return 'Chennai Airport';
+      return 'Chennai';
+    }
+    if (clean.contains('bangalore') || clean.contains('blr') || clean.contains('bengaluru')) {
+      if (clean.contains('airport')) return 'Bangalore Airport';
+      return 'Bangalore';
+    }
+    if (clean.contains('hostel')) return 'Hostels';
+    if (clean.contains('main gate') || clean.contains('maingate')) return 'Main Gate';
+    
+    final words = location.trim().split(RegExp(r'\s+'));
+    if (words.isNotEmpty) {
+      return words.map((w) {
+        if (w.isEmpty) return '';
+        return w[0].toUpperCase() + w.substring(1).toLowerCase();
+      }).join(' ');
+    }
+    return location;
+  }
+
+  Widget _buildResponsiveJoinButton({
+    required User? currentUser,
+    required bool isMyOwnRide,
+    required String docId,
+    required Ride ride,
+    required int currentAvailable,
+    required double height,
+    required double borderRadius,
+    required double fontSize,
+  }) {
+    final style = ElevatedButton.styleFrom(
+      backgroundColor: Colors.indigo,
+      foregroundColor: Colors.white,
+      elevation: 0,
+      padding: EdgeInsets.zero,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(borderRadius)),
+    );
+
+    if (currentUser == null) {
+      return ElevatedButton(
+        onPressed: () => _showLogin(() => _sendJoinRequest(docId, ride)),
+        style: style,
+        child: Text("Join", style: TextStyle(fontWeight: FontWeight.bold, fontSize: fontSize)),
+      );
+    }
+
+    if (isMyOwnRide) {
+      return ElevatedButton(
+        onPressed: null,
+        style: ElevatedButton.styleFrom(
+          backgroundColor: Colors.grey[200],
+          foregroundColor: Colors.grey[600],
+          elevation: 0,
+          padding: EdgeInsets.zero,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(borderRadius)),
+        ),
+        child: Text("Your Ride", style: TextStyle(fontWeight: FontWeight.bold, fontSize: fontSize)),
+      );
+    }
+
+    return StreamBuilder<QuerySnapshot>(
+      stream: FirebaseFirestore.instance
+          .collection('requests')
+          .where('rideId', isEqualTo: docId)
+          .where('passengerId', isEqualTo: currentUser.uid)
+          .snapshots(),
+      builder: (ctx, snap) {
+        String btnText = "Join";
+        Color btnColor = Colors.indigo;
+        VoidCallback? onPressedAction = () => _sendJoinRequest(docId, ride);
+
+        if (snap.hasData && snap.data!.docs.isNotEmpty) {
+          final reqDoc = snap.data!.docs.first;
+          final reqData = reqDoc.data() as Map<String, dynamic>;
+          final status = reqData['status'] ?? 'pending';
+
+          if (status == 'accepted') {
+            btnText = "Leave";
+            btnColor = Colors.redAccent;
+            onPressedAction = () => _confirmLeaveRide(docId, reqDoc.id);
+          } else if (status == 'pending') {
+            btnText = "Cancel";
+            btnColor = Colors.orange;
+            onPressedAction = () => _confirmClearRequest(reqDoc.id);
+          }
+        } else {
+          if (currentAvailable <= 0) {
+            btnText = "Full";
+            btnColor = Colors.redAccent;
+            onPressedAction = null;
+          }
+        }
+
+        return ElevatedButton(
+          onPressed: onPressedAction,
+          style: ElevatedButton.styleFrom(
+            backgroundColor: btnColor,
+            disabledBackgroundColor: btnColor.withValues(alpha: 0.8),
+            disabledForegroundColor: Colors.white,
+            foregroundColor: Colors.white,
+            elevation: 0,
+            padding: EdgeInsets.zero,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(borderRadius)),
+          ),
+          child: Text(btnText, style: TextStyle(fontWeight: FontWeight.bold, fontSize: fontSize)),
+        );
+      },
     );
   }
 
@@ -2011,6 +3078,687 @@ class _RideListScreenState extends State<RideListScreen> {
   }
 
   void _showSnackBar(String msg) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg), behavior: SnackBarBehavior.floating));
+    ToastService.show(context, msg);
   }
+
+  Widget _buildRequestsDrawer() {
+    final double screenWidth = MediaQuery.of(context).size.width;
+    final double drawerWidth = screenWidth > 800 ? (screenWidth * 0.3).clamp(360.0, 500.0) : screenWidth * 0.85;
+
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      return const SizedBox.shrink();
+    }
+
+    return SizedBox(
+      width: drawerWidth,
+      child: Drawer(
+        backgroundColor: Colors.white,
+        child: StreamBuilder<QuerySnapshot>(
+          stream: FirebaseFirestore.instance
+              .collection('requests')
+              .where('driverId', isEqualTo: user.uid)
+              .where('status', isEqualTo: 'pending')
+              .snapshots(),
+          builder: (context, snapshot) {
+            if (snapshot.connectionState == ConnectionState.waiting) {
+              return const Center(child: CircularProgressIndicator());
+            }
+
+            final reqDocs = snapshot.data?.docs ?? [];
+            
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // Drawer Header
+                Container(
+                  padding: const EdgeInsets.fromLTRB(20, 24, 20, 16),
+                  decoration: const BoxDecoration(
+                    border: Border(bottom: BorderSide(color: Color(0xFFF1F3F5))),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            "Recent Ride Invites",
+                            style: GoogleFonts.instrumentSans(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.black87,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            "You have ${reqDocs.length} new invites",
+                            style: GoogleFonts.instrumentSans(
+                              fontSize: 13,
+                              color: Colors.indigo[600],
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.close_rounded, color: Colors.grey),
+                        onPressed: () => Navigator.pop(context),
+                      ),
+                    ],
+                  ),
+                ),
+
+                // Drawer Body - Requests List
+                Expanded(
+                  child: reqDocs.isEmpty
+                      ? _buildEmptyInvitesState()
+                      : ListView.separated(
+                          padding: const EdgeInsets.all(20),
+                          itemCount: reqDocs.length,
+                          separatorBuilder: (context, index) => const Divider(height: 24, color: Color(0xFFF1F3F5)),
+                          itemBuilder: (context, index) {
+                            final doc = reqDocs[index];
+                            final data = doc.data() as Map<String, dynamic>;
+                            return _buildDrawerInviteCard(doc.id, data);
+                          },
+                        ),
+                ),
+
+                // Drawer Footer
+                if (reqDocs.isNotEmpty)
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+                    decoration: const BoxDecoration(
+                      border: Border(top: BorderSide(color: Color(0xFFF1F3F5))),
+                    ),
+                    child: TextButton(
+                      onPressed: () {
+                        Navigator.pop(context); // Close drawer
+                        setState(() {
+                          _currentTabNavigationIndex = 2; // Go to Hub tab
+                        });
+                      },
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Text(
+                            "View all invites",
+                            style: GoogleFonts.instrumentSans(
+                              color: Colors.indigo[800],
+                              fontWeight: FontWeight.bold,
+                              fontSize: 14,
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          Icon(Icons.arrow_forward_ios_rounded, size: 12, color: Colors.indigo[800]),
+                        ],
+                      ),
+                    ),
+                  ),
+              ],
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _buildEmptyInvitesState() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32.0),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.mail_outline_rounded, size: 54, color: Colors.grey[300]),
+            const SizedBox(height: 16),
+            Text(
+              "No pending invites",
+              style: GoogleFonts.instrumentSans(fontSize: 15, fontWeight: FontWeight.bold, color: Colors.black87),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              "When other students request to join your offered journeys, they will appear here.",
+              textAlign: TextAlign.center,
+              style: GoogleFonts.instrumentSans(color: Colors.grey, fontSize: 12, height: 1.4),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDrawerInviteCard(String requestId, Map<String, dynamic> reqData) {
+    final String rideId = reqData['rideId'] ?? '';
+    final String passengerName = _cleanName(reqData['passengerName'] ?? 'Student');
+    final timeAgo = _getTimeAgo(reqData['timestamp'] ?? reqData['createdAt']);
+
+    return StreamBuilder<DocumentSnapshot>(
+      stream: FirebaseFirestore.instance.collection('rides').doc(rideId).snapshots(),
+      builder: (context, rideSnap) {
+        if (!rideSnap.hasData) {
+          return const SizedBox(
+            height: 100,
+            child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+          );
+        }
+
+        if (!rideSnap.data!.exists) {
+          return Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.red[50],
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Text(
+              "This ride has been cancelled by host.",
+              style: GoogleFonts.instrumentSans(color: Colors.red, fontSize: 12),
+            ),
+          );
+        }
+
+        final rideData = rideSnap.data!.data() as Map<String, dynamic>;
+        final String vehicle = rideData['vehicleType'] ?? 'Auto';
+        
+        final rawTotal = rideData['totalSeats'] ?? rideData['seats'] ?? 4;
+        int totalCapacity = rawTotal is num ? rawTotal.toInt() : (int.tryParse(rawTotal.toString()) ?? 4);
+        final rawAvailable = rideData['availableSeats'] ?? totalCapacity;
+        int currentAvailable = rawAvailable is num ? rawAvailable.toInt() : (int.tryParse(rawAvailable.toString()) ?? totalCapacity);
+        
+        final departureTime = (rideData['departureTime'] as Timestamp).toDate();
+        final countdown = _formatDepartureCountdown(departureTime);
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                CircleAvatar(
+                  radius: 16,
+                  backgroundColor: const Color(0xFFE8EAF6),
+                  child: Text(
+                    passengerName.isNotEmpty ? passengerName.substring(0, 1).toUpperCase() : 'U',
+                    style: GoogleFonts.instrumentSans(
+                      color: const Color(0xFF3F51B5),
+                      fontWeight: FontWeight.bold,
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    passengerName,
+                    style: GoogleFonts.instrumentSans(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 14,
+                      color: Colors.black87,
+                    ),
+                  ),
+                ),
+                Text(
+                  timeAgo,
+                  style: GoogleFonts.instrumentSans(fontSize: 11, color: Colors.grey),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Column(
+                  children: [
+                    const SizedBox(height: 3),
+                    const Icon(Icons.circle_outlined, size: 10, color: Colors.blue),
+                    Container(width: 1.5, height: 18, color: Colors.grey[300]),
+                    const Icon(Icons.location_on, size: 12, color: Colors.redAccent),
+                  ],
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        reqData['pickupPoint'] ?? '',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: GoogleFonts.instrumentSans(
+                          fontSize: 12,
+                          color: Colors.black87,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      Text(
+                        reqData['destination'] ?? '',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: GoogleFonts.instrumentSans(
+                          fontSize: 12,
+                          color: Colors.black87,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    _buildVehicleBadge(vehicle),
+                    const SizedBox(height: 8),
+                    Text(
+                      currentAvailable <= 0 ? "Full" : "$currentAvailable spots left",
+                      style: GoogleFonts.instrumentSans(
+                        color: currentAvailable <= 0 ? Colors.red : Colors.green[700],
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    Text(
+                      countdown,
+                      style: GoogleFonts.instrumentSans(
+                        color: Colors.orange[800],
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.grey[700],
+                      side: BorderSide(color: Colors.grey[300]!),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      padding: const EdgeInsets.symmetric(vertical: 8),
+                    ),
+                    onPressed: () => _processRequestDecision(requestId, rideId, 'declined'),
+                    child: Text(
+                      "Ignore",
+                      style: GoogleFonts.instrumentSans(fontSize: 12, fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.indigo,
+                      foregroundColor: Colors.white,
+                      elevation: 0,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      padding: const EdgeInsets.symmetric(vertical: 8),
+                    ),
+                    onPressed: () {
+                      Navigator.pop(context);
+                      setState(() {
+                        _currentTabNavigationIndex = 2; // Nav to Hub
+                      });
+                    },
+                    child: Text(
+                      "View",
+                      style: GoogleFonts.instrumentSans(fontSize: 12, fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildDesktopSkeletonCard() {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      child: TicketCard(
+        cutPosition: 64.0,
+        cutRadius: 10.0,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // Header Section Skeleton
+            Container(
+              height: 64,
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              alignment: Alignment.center,
+              child: Row(
+                children: [
+                  // Avatar Skeleton
+                  Container(
+                    width: 32,
+                    height: 32,
+                    decoration: BoxDecoration(
+                      color: Colors.grey[200],
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  // Name Skeleton
+                  Container(
+                    width: 120,
+                    height: 16,
+                    decoration: BoxDecoration(
+                      color: Colors.grey[200],
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                  ),
+                  const Spacer(),
+                  // Vehicle Badge Skeleton
+                  Container(
+                    width: 60,
+                    height: 20,
+                    decoration: BoxDecoration(
+                      color: Colors.grey[200],
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            
+            // Body Section Skeleton
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      // Pickup Location Skeleton
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Container(width: 80, height: 14, color: Colors.grey[200]),
+                          const SizedBox(height: 6),
+                          Container(width: 60, height: 16, color: Colors.grey[200]),
+                          const SizedBox(height: 6),
+                          Container(width: 100, height: 12, color: Colors.grey[200]),
+                        ],
+                      ),
+                      // Trajectory Skeleton
+                      Container(
+                        width: 120,
+                        height: 24,
+                        color: Colors.grey[100],
+                      ),
+                      // Destination Location Skeleton
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Container(width: 80, height: 14, color: Colors.grey[200]),
+                          const SizedBox(height: 6),
+                          Container(width: 60, height: 16, color: Colors.grey[200]),
+                          const SizedBox(height: 6),
+                          Container(width: 100, height: 12, color: Colors.grey[200]),
+                        ],
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 20),
+                  // Metadata Row Skeleton
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Container(width: 90, height: 14, color: Colors.grey[200]),
+                      Container(width: 90, height: 14, color: Colors.grey[200]),
+                      Container(width: 90, height: 14, color: Colors.grey[200]),
+                    ],
+                  ),
+                  const SizedBox(height: 20),
+                  // Buttons Skeleton
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Container(
+                          height: 38,
+                          decoration: BoxDecoration(
+                            color: Colors.grey[200],
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Container(
+                          height: 38,
+                          decoration: BoxDecoration(
+                            color: Colors.grey[200],
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// -------------------------------------------------------------
+// TICKET DESIGN UTILITIES & CUSTOM PAINTERS
+// -------------------------------------------------------------
+
+class TicketCard extends StatelessWidget {
+  final Widget child;
+  final double cutPosition;
+  final double cutRadius;
+
+  const TicketCard({
+    super.key,
+    required this.child,
+    required this.cutPosition,
+    this.cutRadius = 8.0,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return CustomPaint(
+      painter: TicketCardPainter(cutPosition: cutPosition, cutRadius: cutRadius),
+      child: ClipPath(
+        clipper: TicketClipper(cutPosition: cutPosition, cutRadius: cutRadius),
+        child: child,
+      ),
+    );
+  }
+}
+
+class TicketClipper extends CustomClipper<Path> {
+  final double cutPosition;
+  final double cutRadius;
+
+  TicketClipper({required this.cutPosition, this.cutRadius = 8.0});
+
+  @override
+  Path getClip(Size size) {
+    final path = Path();
+    path.moveTo(0, 0);
+    path.lineTo(size.width, 0);
+    
+    // Right side notch
+    path.lineTo(size.width, cutPosition - cutRadius);
+    path.arcToPoint(
+      Offset(size.width, cutPosition + cutRadius),
+      radius: Radius.circular(cutRadius),
+      clockwise: false,
+    );
+    path.lineTo(size.width, size.height);
+    path.lineTo(0, size.height);
+    
+    // Left side notch
+    path.lineTo(0, cutPosition + cutRadius);
+    path.arcToPoint(
+      Offset(0, cutPosition - cutRadius),
+      radius: Radius.circular(cutRadius),
+      clockwise: false,
+    );
+    path.close();
+    return path;
+  }
+
+  @override
+  bool shouldReclip(covariant CustomClipper<Path> oldClipper) => true;
+}
+
+class TicketCardPainter extends CustomPainter {
+  final double cutPosition;
+  final double cutRadius;
+
+  TicketCardPainter({required this.cutPosition, required this.cutRadius});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final path = Path();
+    path.moveTo(0, 0);
+    path.lineTo(size.width, 0);
+    
+    // Right side notch
+    path.lineTo(size.width, cutPosition - cutRadius);
+    path.arcToPoint(
+      Offset(size.width, cutPosition + cutRadius),
+      radius: Radius.circular(cutRadius),
+      clockwise: false,
+    );
+    path.lineTo(size.width, size.height);
+    path.lineTo(0, size.height);
+    
+    // Left side notch
+    path.lineTo(0, cutPosition + cutRadius);
+    path.arcToPoint(
+      Offset(0, cutPosition - cutRadius),
+      radius: Radius.circular(cutRadius),
+      clockwise: false,
+    );
+    path.close();
+
+    // Draw shadow
+    canvas.drawShadow(path, Colors.black.withValues(alpha: 0.06), 5.0, true);
+
+    // Fill with white
+    final fillPaint = Paint()
+      ..color = Colors.white
+      ..style = PaintingStyle.fill;
+    canvas.drawPath(path, fillPaint);
+
+    // Draw border
+    final borderPaint = Paint()
+      ..color = Colors.grey[200]!
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.0;
+    canvas.drawPath(path, borderPaint);
+
+    // Draw dashed divider line between notches
+    final dashPaint = Paint()
+      ..color = Colors.grey[300]!
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.0;
+
+    const dashWidth = 4.0;
+    const dashSpace = 3.0;
+    double startX = cutRadius;
+    final endX = size.width - cutRadius;
+    while (startX < endX) {
+      canvas.drawLine(
+        Offset(startX, cutPosition),
+        Offset(startX + dashWidth, cutPosition),
+        dashPaint,
+      );
+      startX += dashWidth + dashSpace;
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
+}
+
+class DashedArcPainter extends CustomPainter {
+  final Color color;
+  DashedArcPainter({required this.color});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.2;
+
+    // Start dot at y = 28, end dot at y = 28. Control point at y = 4 (for curve upwards)
+    final p0 = Offset(6, 28);
+    final p1 = Offset(size.width / 2, 4);
+    final p2 = Offset(size.width - 6, 28);
+
+    // Approximate bezier path
+    const steps = 30;
+    List<Offset> points = [];
+    for (int i = 0; i <= steps; i++) {
+      double t = i / steps;
+      double x = (1 - t) * (1 - t) * p0.dx + 2 * (1 - t) * t * p1.dx + t * t * p2.dx;
+      double y = (1 - t) * (1 - t) * p0.dy + 2 * (1 - t) * t * p1.dy + t * t * p2.dy;
+      points.add(Offset(x, y));
+    }
+
+    // Draw dashes
+    bool draw = true;
+    double accumulatedLength = 0;
+    const dashLength = 4.0;
+    const gapLength = 3.0;
+
+    for (int i = 0; i < points.length - 1; i++) {
+      final pA = points[i];
+      final pB = points[i + 1];
+      final segmentLength = (pB - pA).distance;
+
+      accumulatedLength += segmentLength;
+      if (draw) {
+        if (accumulatedLength >= dashLength) {
+          canvas.drawLine(pA, pB, paint);
+          accumulatedLength = 0;
+          draw = false;
+        } else {
+          canvas.drawLine(pA, pB, paint);
+        }
+      } else {
+        if (accumulatedLength >= gapLength) {
+          accumulatedLength = 0;
+          draw = true;
+        }
+      }
+    }
+
+    // Draw start and end dots with inner/outer rings
+    final dotPaint = Paint()
+      ..color = Colors.black87
+      ..style = PaintingStyle.fill;
+      
+    final dotOuterPaint = Paint()
+      ..color = Colors.grey[200]!
+      ..style = PaintingStyle.fill;
+
+    canvas.drawCircle(p0, 4.0, dotOuterPaint);
+    canvas.drawCircle(p0, 2.0, dotPaint);
+
+    canvas.drawCircle(p2, 4.0, dotOuterPaint);
+    canvas.drawCircle(p2, 2.0, dotPaint);
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }

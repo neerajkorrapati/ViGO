@@ -3,6 +3,7 @@ import '../models/party_model.dart';
 import '../models/user_model.dart';
 import '../services/firestore_service.dart';
 import '../services/auth_service.dart';
+import '../services/toast_service.dart';
 
 class CreateRideSheet extends StatefulWidget {
   const CreateRideSheet({super.key});
@@ -25,12 +26,12 @@ class _CreateRideSheetState extends State<CreateRideSheet> {
     final String? uid = _auth.currentUserId;
     
     if (uid == null) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Error: Not logged in")));
+      ToastService.show(context, "Error: Not logged in", isWarning: true);
       return;
     }
 
     if (_destinationController.text.trim().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Please enter a destination")));
+      ToastService.show(context, "Please enter a destination", isWarning: true);
       return;
     }
 
@@ -65,7 +66,7 @@ class _CreateRideSheetState extends State<CreateRideSheet> {
       await FirestoreService().createParty(newParty);
       if (mounted) Navigator.pop(context); 
     } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
+      if (mounted) ToastService.show(context, e.toString(), isWarning: true);
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }

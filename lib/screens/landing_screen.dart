@@ -18,7 +18,7 @@ class LandingScreen extends StatelessWidget {
           padding: const EdgeInsets.only(left: 16.0),
           child: Image.network(
             "/vigo_full_logo.jpeg",
-            height: 30, // Perfectly scaled for the header
+            height: 50, // Perfectly scaled for the header
             fit: BoxFit.contain,
           ),
         ),
@@ -44,7 +44,7 @@ class LandingScreen extends StatelessWidget {
                         Text(
                           "Stop overpaying for cabs. Match with VITians, split the fare, and travel smart...",
                           
-                          style: TextStyle(fontSize: 20, color: Colors.black.withOpacity(0.6), height: 1.6),
+                          style: TextStyle(fontSize: 20, color: Colors.black.withValues(alpha: 0.6), height: 1.6),
                           textAlign: isDesktop ? TextAlign.start : TextAlign.center,
                         ),
                         const SizedBox(height: 48),
