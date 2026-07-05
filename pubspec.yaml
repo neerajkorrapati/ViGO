@@ -69,6 +69,7 @@ flutter:
     - web/assets/rideListBG.jpeg
     - web/assets/404_desktop.jpg
     - web/assets/404_mobile.png
+    - web/assets/landing_footer_bg.png
 
   # To add assets to your application, add an assets section, like this:
   # assets:

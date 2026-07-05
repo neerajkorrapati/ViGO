@@ -1,7 +1,10 @@
 const functions = require('firebase-functions');
+const admin = require('firebase-admin');
 const express = require('express');
 const cors = require('cors');
 const twilio = require('twilio');
+
+admin.initializeApp();
 
 const app = express();
 app.use(cors({ origin: true }));
@@ -33,3 +36,40 @@ app.post('/sendWhatsApp', async (req, res) => {
 });
 
 exports.api = functions.https.onRequest(app);
+
+// Aggregate stats increment/decrement triggers
+exports.incrementUserCount = functions.firestore
+  .document('users/{userId}')
+  .onCreate(async (snap, context) => {
+    const statsRef = admin.firestore().doc('stats/global');
+    await statsRef.set({
+      usersCount: admin.firestore.FieldValue.increment(1)
+    }, { merge: true });
+  });
+
+exports.decrementUserCount = functions.firestore
+  .document('users/{userId}')
+  .onDelete(async (snap, context) => {
+    const statsRef = admin.firestore().doc('stats/global');
+    await statsRef.set({
+      usersCount: admin.firestore.FieldValue.increment(-1)
+    }, { merge: true });
+  });
+
+exports.incrementRideCount = functions.firestore
+  .document('rides/{rideId}')
+  .onCreate(async (snap, context) => {
+    const statsRef = admin.firestore().doc('stats/global');
+    await statsRef.set({
+      activeRidesCount: admin.firestore.FieldValue.increment(1)
+    }, { merge: true });
+  });
+
+exports.decrementRideCount = functions.firestore
+  .document('rides/{rideId}')
+  .onDelete(async (snap, context) => {
+    const statsRef = admin.firestore().doc('stats/global');
+    await statsRef.set({
+      activeRidesCount: admin.firestore.FieldValue.increment(-1)
+    }, { merge: true });
+  });
