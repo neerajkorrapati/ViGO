@@ -73,3 +73,28 @@ exports.decrementRideCount = functions.firestore
       activeRidesCount: admin.firestore.FieldValue.increment(-1)
     }, { merge: true });
   });
+
+// Scheduled function to update active rides count by cleaning up expired rides (departureTime < now)
+exports.updateActiveRidesCount = functions.pubsub
+  .schedule('every 15 minutes')
+  .onRun(async (context) => {
+    const db = admin.firestore();
+    const now = admin.firestore.Timestamp.now();
+
+    try {
+      const activeRidesSnap = await db.collection('rides')
+        .where('departureTime', '>=', now)
+        .count()
+        .get();
+
+      const count = activeRidesSnap.data().count;
+
+      await db.doc('stats/global').set({
+        activeRidesCount: count
+      }, { merge: true });
+
+      console.log(`Successfully updated activeRidesCount to ${count} at ${now.toDate()}`);
+    } catch (error) {
+      console.error("Error updating scheduled activeRidesCount:", error);
+    }
+  });
